@@ -6,6 +6,10 @@ Pytanie wyjściowe: mamy `.cas`/`.dat` z Fluenta, ~1500 zdjęć post-processingu
 
 **Tak — ale jako pack, nie jako dump.** Ten repo pokazuje kontrakt danych, redukcję 1500 klatek do hero ramek i recenzenta aero na syntetycznym case FS-26.
 
+**Handoff dla lokalnego agenta (źródło prawdy):** [BRIEFING.md](./BRIEFING.md)
+
+Szablon kart geometrii (profil, cięciwa, AoA): [templates/geometry.yaml](./templates/geometry.yaml)
+
 ## Co tu jest
 
 - Werdykt researchu i 12 źródeł (Navier Post-Processing Agent, AI CFD Scientist, CFDagent, AeroAgent, PyFluent FileSession, FluentCFFReader, Tampere FS, WAK Dynamic, …).

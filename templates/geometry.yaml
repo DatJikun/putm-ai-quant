@@ -1,0 +1,82 @@
+# Wypełnij i trzymaj obok CAD. To źródło prawdy o intencji geometrii.
+# Half-model, yaw 0, jazda na wprost. Długości w mm. Y=0 = symmetry.
+
+vehicle:
+  name: TBD
+  halfModel: true
+  yawDeg: 0
+  rideHeightFrontMm: TBD
+  rideHeightRearMm: TBD
+  rakeDeg: TBD
+  wheelbaseMm: TBD
+  trackMm: TBD
+  frontalAreaM2: TBD
+  frontalAreaBasis: full   # full | half
+  origin: "TBD: np. symmetry, ground, X=0 at front axle"
+  xIncreases: rearward     # rearward | forward
+
+devices:
+  - id: fw-main
+    group: front-wing
+    role: mainplane
+    profile: TBD
+    profileSource: TBD
+    chordMm: TBD
+    spanMm: TBD
+    incidenceDeg: TBD
+    twistDeg: 0
+    le: { xMm: TBD, zMm: TBD }
+    te: { xMm: TBD, zMm: TBD }
+    slotGapMm: null
+    overlapMm: null
+    gurneyMm: 0
+    notes: ""
+
+  - id: fw-flap-1
+    group: front-wing
+    role: flap
+    profile: TBD
+    chordMm: TBD
+    spanMm: TBD
+    incidenceDeg: TBD
+    le: { xMm: TBD, zMm: TBD }
+    te: { xMm: TBD, zMm: TBD }
+    slotGapMm: TBD
+    overlapMm: TBD
+    gurneyMm: 0
+    notes: ""
+
+  - id: rw-main
+    group: rear-wing
+    role: mainplane
+    profile: TBD
+    chordMm: TBD
+    spanMm: TBD
+    incidenceDeg: TBD
+    le: { xMm: TBD, zMm: TBD }
+    te: { xMm: TBD, zMm: TBD }
+    gurneyMm: 0
+    notes: "DRS closed, yaw 0"
+
+  - id: floor
+    group: floor
+    role: undertray
+    profile: null
+    chordMm: null
+    le: { xMm: TBD, zMm: TBD }
+    te: { xMm: TBD, zMm: TBD }
+    notes: "throat / kick-up opisz w notes"
+
+  - id: diffuser
+    group: floor
+    role: diffuser
+    incidenceDeg: TBD
+    le: { xMm: TBD, zMm: TBD }
+    te: { xMm: TBD, zMm: TBD }
+    notes: "kąt, kanały, fences"
+
+  - id: hoop
+    group: body
+    role: roll-hoop
+    le: { xMm: TBD, zMm: TBD }
+    notes: "wysokość — brudne powietrze na RW"
