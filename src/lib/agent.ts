@@ -182,10 +182,7 @@ export function evaluateCase(
     review.verdict = "warunkowo-akceptowalne"
   else review.verdict = "akceptowalne"
 
-  review.summary =
-    review.verdict === "warunkowo-akceptowalne"
-      ? `Case ${fluent.name} da się recenzować: liczby, CAD i 1500 klatek schodzą do ${heroes.length} hero ramek. L/D jest w normie FS, ale y+ na skrzydłach kłóci się z SST, continuity jest na granicy, a balans ${kpis.frontBalancePct}% z przodu jest tyłociężki. Agent nie powinien „oglądać” surowych .cas/.dat — tylko ten pack.`
-      : `Werdykt: ${review.verdict}.`
+  review.summary = `Case ${fluent.name}: L/D ${kpis.LOverD.toFixed(2)}, balans ${kpis.frontBalancePct}% z przodu, ${heroes.length} hero z ${images.length} klatek. y+ na skrzydłach i continuity ograniczają pewność sił — ${review.verdict === "akceptowalne" ? "można porównywać geometrie" : "nie porównuj geometrii na trzecim miejscu po przecinku, zanim to posprzątasz"}. Agent nie powinien oglądać surowych .cas/.dat, tylko ten pack.`
 
   return review
 }

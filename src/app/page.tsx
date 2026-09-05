@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { sources, verdict } from "@/lib/research"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
 import { ArrowRight } from "lucide-react"
 
 const LAYERS = [
@@ -51,13 +52,13 @@ export default function HomePage() {
         da się kliknąć w warsztacie.
       </p>
       <div className="mt-8 flex flex-wrap gap-3">
-        <Button render={<Link href="/warsztat" />}>
+        <Link href="/warsztat" className={cn(buttonVariants())}>
           Otwórz warsztat demo
           <ArrowRight />
-        </Button>
-        <Button variant="outline" render={<a href="#zrodla" />}>
+        </Link>
+        <a href="#zrodla" className={cn(buttonVariants({ variant: "outline" }))}>
           12 źródeł z internetu
-        </Button>
+        </a>
       </div>
 
       <section className="mt-14 grid gap-3 md:grid-cols-3">
@@ -179,10 +180,10 @@ export default function HomePage() {
           Wtedy pack przestaje być syntetyczny. Demo obok pokazuje, jak ten pack
           ma wyglądać i jakiego recenzenta warto na nim puścić.
         </p>
-        <Button className="mt-4" render={<Link href="/warsztat" />}>
+        <Link href="/warsztat" className={cn(buttonVariants(), "mt-4")}>
           Zobacz pack na FS-26
           <ArrowRight />
-        </Button>
+        </Link>
       </section>
     </div>
   )
