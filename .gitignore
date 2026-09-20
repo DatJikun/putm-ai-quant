@@ -42,3 +42,8 @@ next-env.d.ts
 
 # agent scratch
 /agent-tools
+
+# python ingest
+__pycache__/
+.venv/
+/packs

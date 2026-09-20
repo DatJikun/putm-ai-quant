@@ -1,0 +1,48 @@
+# Zakresy animacji z CFD-Post (Post Pro Ansys 2023_Epsilon.txt).
+# Klatka 1 = start, klatka 150 = end, interpolacja liniowa.
+# Na przekroju X skrypt rysuje "x = <aa>" z maxVal(X)@Plane1.
+# Legendy są User Specified w skrypcie — nie wolno porównywać iteracji
+# jeśli min/max albo kind (V vs V/Vinf) się rozjadą.
+
+frames: 150
+speedMs: 15
+rho: 1.225
+x:
+  startM: -1.1
+  endM: 2.5
+y:
+  startM: -0.01
+  endM: -0.9
+z:
+  startM: 0.0
+  endM: 1.5
+fields:
+  cp:
+    quantity: Pressure Coefficient
+    kind: coefficient
+    legend: [-2.25, 1.0]
+    rangeLocked: true
+  cpt:
+    quantity: CpT
+    kind: coefficient
+    formula: "(p + 0.6125*V^2)/(0.5*1.225*15^2)"
+    legend: [-1.0, 1.0]
+    rangeLocked: true
+  vel:
+    quantity: NormalisedVelocity
+    kind: V/Vinf
+    vInfSource: maxVal(Velocity)@domain_inlet
+    legend: [0.0, 2.5]
+    unit: "1"
+    rangeLocked: true
+  wss:
+    quantity: Wall Shear
+    kind: absolute
+    legend: [0.0, 3.0]
+    unit: Pa
+    rangeLocked: true
+  yplus:
+    quantity: Yplus
+    kind: absolute
+    legend: [0.0, 60.0]
+    rangeLocked: true

@@ -1,82 +1,195 @@
-# Wypełnij i trzymaj obok CAD. To źródło prawdy o intencji geometrii.
-# Half-model, yaw 0, jazda na wprost. Długości w mm. Y=0 = symmetry.
+# Geometria zmierzona z Baseline002.STEP. Długości w mm. Y=0 = symmetry.
+# Half-model CFD, yaw 0. X rośnie do tyłu. Z do góry.
+# Cięciwa/kąt: przekrój siatki. Płyty i boxy: tylko bbox. Profile (S1223 itd.) TBD.
 
 vehicle:
-  name: TBD
+  name: PM09
   halfModel: true
   yawDeg: 0
   rideHeightFrontMm: TBD
   rideHeightRearMm: TBD
   rakeDeg: TBD
-  wheelbaseMm: TBD
+  wheelbaseMm: 1550
   trackMm: TBD
-  frontalAreaM2: TBD
-  frontalAreaBasis: full   # full | half
-  origin: "TBD: np. symmetry, ground, X=0 at front axle"
-  xIncreases: rearward     # rearward | forward
+  frontalAreaM2: 0.5
+  frontalAreaBasis: half
+  origin: "X rośnie do tyłu; post-pro X od -1.1 do 2.5 m. Wheelbase z środków REF-BOX kół (~35 mm i ~1585 mm)."
+  xIncreases: rearward
+  zPositive: up
 
 devices:
   - id: fw-main
     group: front-wing
     role: mainplane
+    cadName: PM09-A-FW-Main_Profile-CFD
     profile: TBD
-    profileSource: TBD
-    chordMm: TBD
-    spanMm: TBD
-    incidenceDeg: TBD
+    chordMm: 347.23
+    spanMm: 630
+    incidenceDeg: -1.76
     twistDeg: 0
-    le: { xMm: TBD, zMm: TBD }
-    te: { xMm: TBD, zMm: TBD }
-    slotGapMm: null
-    overlapMm: null
-    gurneyMm: 0
-    notes: ""
+    le: { xMm: -885.95, zMm: 82.92 }
+    te: { xMm: -538.88, zMm: 72.24 }
+    notes: "Przekrój Y=-315 mm. W CAD obie strony (±630); tu span do symmetry."
 
   - id: fw-flap-1
     group: front-wing
     role: flap
+    cadName: PM09-A-FW-Profile1-CFD
     profile: TBD
-    chordMm: TBD
-    spanMm: TBD
-    incidenceDeg: TBD
-    le: { xMm: TBD, zMm: TBD }
-    te: { xMm: TBD, zMm: TBD }
-    slotGapMm: TBD
-    overlapMm: TBD
-    gurneyMm: 0
-    notes: ""
+    chordMm: 91.82
+    spanMm: 381
+    incidenceDeg: 31.57
+    le: { xMm: -538.03, zMm: 97.64 }
+    te: { xMm: -459.8, zMm: 145.71 }
+    slotGapMm: 0.85
+    overlapMm: 0
+    notes: "Klapa zewnętrzna. Przekrój rzadki (5 pkt)."
+
+  - id: fw-flap-2
+    group: front-wing
+    role: flap
+    cadName: PM09-A-FW-Profile2-CFD
+    profile: TBD
+    chordMm: 45.53
+    spanMm: 389
+    incidenceDeg: 46.5
+    le: { xMm: -473.83, zMm: 165.54 }
+    te: { xMm: -442.48, zMm: 198.57 }
+    overlapMm: 14.0
+    notes: "Zakładka ~14 mm na klapę 1. Przekrój rzadki — cięciwa może być zaniżona. Profile3 nie było w STEPie."
+
+  - id: fw-endplate
+    group: front-wing
+    role: endplate
+    cadName: PM09-A-FW-End_plate-CFD
+    chordMm: null
+    le: { xMm: -902.04, zMm: 30.0 }
+    te: { xMm: -283.86, zMm: 270.0 }
+    notes: "Płyta ~618 × 240 mm, nie płat."
+
+  - id: fw-middle-plate
+    group: front-wing
+    role: fence
+    cadName: PM09-A-FW-Middle_Plate-CFD
+    le: { xMm: -718.35, zMm: 64.49 }
+    te: { xMm: -237.74, zMm: 335.23 }
+    notes: "Fence / płyta środkowa."
 
   - id: rw-main
     group: rear-wing
     role: mainplane
+    cadName: PM09-A-RW-Main_plane-CFD
     profile: TBD
-    chordMm: TBD
-    spanMm: TBD
-    incidenceDeg: TBD
-    le: { xMm: TBD, zMm: TBD }
-    te: { xMm: TBD, zMm: TBD }
-    gurneyMm: 0
-    notes: "DRS closed, yaw 0"
+    chordMm: 528.13
+    spanMm: 461
+    incidenceDeg: 7.45
+    le: { xMm: 1227.0, zMm: 792.0 }
+    te: { xMm: 1750.67, zMm: 860.46 }
+    notes: "Przekrój Y=-230.5 mm, 128 pkt. DRS closed."
+
+  - id: rw-flap-1
+    group: rear-wing
+    role: flap
+    cadName: PM09-A-RW-Plane1-CFD
+    profile: TBD
+    chordMm: null
+    spanMm: 461
+    le: { xMm: 1726.37, zMm: 868.72 }
+    te: { xMm: 1852.72, zMm: 986.06 }
+    notes: "Przekrój pusty — tylko bbox (126 × 117 mm w XZ)."
+
+  - id: rw-flap-2
+    group: rear-wing
+    role: flap
+    cadName: PM09-A-RW-Plane2-CFD
+    profile: TBD
+    chordMm: null
+    spanMm: 461
+    le: { xMm: 1821.29, zMm: 961.93 }
+    te: { xMm: 1887.27, zMm: 1067.19 }
+    notes: "Przekrój pusty — tylko bbox (66 × 105 mm w XZ)."
+
+  - id: rw-endplate
+    group: rear-wing
+    role: endplate
+    cadName: PM09-A-RW-End_plate-CFD
+    le: { xMm: 1120.38, zMm: 524.09 }
+    te: { xMm: 1974.47, zMm: 1089.5 }
+    notes: "Płyta ~854 × 565 mm, Y≈-457 (strona half)."
+
+  - id: rw-mounting
+    group: rear-wing
+    role: mounting
+    cadName: PM09-A-RW-Mounting-CFD
+    le: { xMm: 1022.51, zMm: 607.72 }
+    te: { xMm: 1648.21, zMm: 975.36 }
 
   - id: floor
     group: floor
     role: undertray
+    cadName: PM09-A-UT-CFD
     profile: null
-    chordMm: null
-    le: { xMm: TBD, zMm: TBD }
-    te: { xMm: TBD, zMm: TBD }
-    notes: "throat / kick-up opisz w notes"
-
-  - id: diffuser
-    group: floor
-    role: diffuser
-    incidenceDeg: TBD
-    le: { xMm: TBD, zMm: TBD }
-    te: { xMm: TBD, zMm: TBD }
-    notes: "kąt, kanały, fences"
+    spanMm: 674
+    le: { xMm: 206.0, zMm: -22.18 }
+    te: { xMm: 1227.0, zMm: 402.21 }
+    notes: "Zmin -22 mm (lekko pod Z=0). Długość ~1021 mm. Dyfuzor nie jest osobną bryłą w STEPie."
 
   - id: hoop
     group: body
     role: roll-hoop
-    le: { xMm: TBD, zMm: TBD }
-    notes: "wysokość — brudne powietrze na RW"
+    cadName: PM09-A-REF-BOX-Main_Hoop
+    le: { xMm: 950.0, zMm: 450.0 }
+    te: { xMm: 1250.0, zMm: 1090.0 }
+    notes: "Box hoop, wysokość do Z=1090 mm. RW LE jest na Z≈792 — hoop sterczy wyżej."
+
+  - id: helmet
+    group: body
+    role: helmet
+    cadName: PM09-A-REF-BOX-Helmet
+    le: { xMm: 500.0, zMm: 600.0 }
+    te: { xMm: 1000.0, zMm: 1000.0 }
+
+  - id: monocoque
+    group: body
+    role: chassis
+    cadName: PM09-A-REF-BOX-Monocoque
+    le: { xMm: -1100.0, zMm: 130.0 }
+    te: { xMm: 1760.0, zMm: 660.0 }
+
+  - id: front-wheel
+    group: wheels
+    role: front-wheel
+    cadName: PM09-A-REF-BOX-Front_Wheel
+    le: { xMm: -290.0, zMm: -30.0 }
+    te: { xMm: 360.0, zMm: 440.0 }
+    notes: "Box koła, środek X≈35 mm, średnica z bbox ~470 mm."
+
+  - id: rear-wheel
+    group: wheels
+    role: rear-wheel
+    cadName: PM09-A-REF-BOX-Rear_Wheel
+    le: { xMm: 1260.0, zMm: -20.0 }
+    te: { xMm: 1910.0, zMm: 450.0 }
+    notes: "Środek X≈1585 mm. Wheelbase vs przednie koło ≈1550 mm."
+
+  - id: cooling-shrouds
+    group: cooling
+    role: shroud
+    cadName: PM09-A-CS-Schrouds-CFD
+    le: { xMm: 1593.6, zMm: 183.88 }
+    te: { xMm: 1933.0, zMm: 404.16 }
+
+  - id: cooling-fan
+    group: cooling
+    role: fan
+    cadName: PM09-A-CS-Fan-CFD
+    le: { xMm: 1933.0, zMm: 232.16 }
+    te: { xMm: 1971.0, zMm: 359.16 }
+    notes: "MRF fan w meshu."
+
+  - id: radiator-ducts
+    group: cooling
+    role: duct
+    cadName: PM09-A-REF-BOX-Radiator_Ducts
+    le: { xMm: 1562.0, zMm: 110.56 }
+    te: { xMm: 2012.0, zMm: 410.56 }
