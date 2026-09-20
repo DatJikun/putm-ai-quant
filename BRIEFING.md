@@ -346,22 +346,22 @@ Porównuj do zakresów **FS**, nie F1. Na yaw 0 i half nie oceniaj zachowania w 
 
 ---
 
-## 10. Co lokalny agent ma zbudować (kolejność)
+## 10. Co lokalny agent ma zbudować (stan realizacji)
 
-Nie zaczynać od UI. Kolejność:
+Status poszczególnych modułów w kodzie:
 
-1. **Inwentaryzacja folderu** — lista plików, których brakuje (`warnings`).
-2. **`geometry.yaml` template** — puste karty urządzeń; właściciel dopisuje profile/cięciwy/AoA (bez tego pack jest kaleki).
-3. **`ingest/transcript.py`** — `.trn` → hits + wyciągnięte liczby.
-4. **`ingest/journal.py`** — `.jou` → methods.
-5. **`ingest/fluent_cff.py`** — jeśli są `.cas.h5`/`.dat.h5` (PyFluent lub cffview). Fallback: CSV sił.
-6. **`ingest/pictures.py`** — parse nazw → `index.json` + lista hero.
-7. **`ingest/cad_bbox.py`** (opcjonalnie) — nazwane body → le/te jeśli da się.
-8. **`build_pack.py`** — skleja `aeropack.json`.
-9. **Prompt + tools** dla lokalnego modelu (Cursor/Claude/itp.) recenzującego pack.
-10. Dopiero potem UI, jeśli potrzebny.
+1. [x] **Inwentaryzacja folderu** (`ingest/inventory.py`) — skanowanie plików, podział na buckety, wykrywanie braków (`warnings[]`) i typu symulacji.
+2. [x] **`geometry.yaml` template & karty** (`templates/geometry.yaml`) — karty urządzeń FW, RW, podłogi, hoop, kół i tuneli z realnymi wymiarami zmierzonymi z Baseline002.STEP.
+3. [x] **`ingest/transcript.py`** — regex parser plików `.trn`: wersja solvera, liczba komórek, hexcore, scoped prisms, jakość ortogonalna, błędy alokacji Metis.
+4. [x] **`ingest/cas_setup.py`** — parser definicji raportów ze Scheme blob w `.cas`: weryfikacja wektorów sił `(1, 0, 0)` dla $c_x$ i `(0, 0, -1)` dla $c_z$ (potwierdzenie znaku downforce).
+5. [x] **`ingest/wall_forces.py` i `fluent_dump.py`** — podział sił na grupy (FW, RW, floor, body, wheels, cooling), odrzucenie ścian domeny (`domain_ground`, `domain_sky`), sumy kontrolne <1% błędu oraz headless generator journala TUI.
+6. [x] **`ingest/pictures.py` i `ingest/slices.py`** — mapowanie klatek CFD-Post na stacje osi w metrach (-1.1 m do 2.5 m) + selekcja hero ramek do `images/index.json`.
+7. [x] **`ingest/cad_measure.py`** — moduł OpenCASCADE (`OCP`) do precyzyjnego cięcia profili ze STEP-a i wyznaczania cięciw, kątów AoA oraz współrzędnych LE/TE.
+8. [x] **`ingest/pack.py`** — główny kompilator składający `aeropack.json` zgodnie ze schematem `aeropack/v1`.
+9. [x] **Prompt + tools** — generowanie ustrukturyzowanego kontraktu dla agenta z wyselekcjonowanymi klatkami hero i zakazem interpretacji pikseli jako metrologii.
+10. [x] **UI & API Next.js** (`src/app/api/packs/`, `src/lib/pack-adapter.ts`, `src/components/workbench.tsx`) — dynamiczne ładowanie lokalnych packów z dysku, obsługa `BASELINEiter002` bolidu PM09, podgląd kart geometrii i diagnostyki solvera.
 
-Język skryptów: **Python 3.11+**. Zależności lekkie: `h5py` / PyFluent jeśli jest licencja, `pyyaml`, `regex`. Nie wymaga Next.js do ingestu.
+Język skryptów: **Python 3.11+**. Testy: `tests/test_ingest.py` (9/9 zaliczonych).
 
 ---
 
@@ -392,36 +392,35 @@ Język skryptów: **Python 3.11+**. Zależności lekkie: `h5py` / PyFluent jeśl
 
 ---
 
-## 13. Co już jest w tym repo (chmura)
+## 13. Co już jest w tym repo
 
-- Next.js **AeroPack**: werdykt researchu + warsztat na **syntetycznym** FS-26 (1500 rekordów katalogu, 17 hero, KPI, prompt, silnik reguł).
-- To **nie** czyta Twoich `.cas`/`.dat`. Kontury są atrapą stacji.
-- Demo wcześniej zakładało full-car i Cs≈0; **prawda: half + yaw 0**. Lokalny ingest ma to nadpisać.
-
-Lokalnie: `npm run dev` tylko jeśli chcesz zobaczyć UI. Ingest budujesz w Pythonie obok prawdziwego folderu case.
-
----
-
-## 14. Otwarte — nie blokuje startu ingestu
-
-- Dokładny Fluent (wersja, poly-hexcore vs tet+pryzmy) — zczyta transcript/cas.
-- Czy Aref w case jest full czy half — **pierwsze pytanie do inżyniera przy pierwszym packu**.
-- Czy koła rotują.
-- Czy zdjęcia mają lustrzane odbicie.
-- Znak osi X w CAD vs Fluent.
-- Hero 25 vs 40 — tunowalne; najpierw działający indeks.
-
-Nie czekaj na te odpowiedzi, żeby napisać parser `.trn` i szablon `geometry.yaml`.
+- **Lokalny pipeline Ingest (`ingest/`)**: w pełni funkcjonalny parser Fluenta, CAD i klatek. Złożył gotowy pack `BASELINEiter002` (bolid PM09, 11.3 mln komórek, 1840 iteracji, podział strefowy).
+- **Zestaw testów (`tests/test_ingest.py`)**: 9 testów w pytest pokrywających transcripty, monitory, wektory sił, sumy kontrolne i mapowanie przekrojów.
+- **Frontend Next.js 16 (`src/`)**: 
+  - Dynamiczny warsztat podłączony pod `/api/packs`.
+  - Przełącznik case'ów (lokalne z `packs/`, syntetyczny demo FS-26, wgrywanie JSON).
+  - Tabela kart parametrycznych geometrii ze STEP/YAML.
+  - Silnik oceniania według twardych kryteriów FSAE.
 
 ---
 
-## 15. Definition of done (lokalnie)
+## 14. Ustalenia fizyczne dla case PM09
 
-Dla **jednego** case’a half-car yaw 0:
+- Solver: Ansys Fluent 2023 R1, siatka poly-hexcore ~11.3 mln komórek.
+- $A_{ref}$: $0.5\text{ m}^2$ (konwencja half-model).
+- Prędkość: $15.0\text{ m/s}$, jazda na wprost ($yaw = 0^\circ$).
+- Wektor siły $c_z$: `(0, 0, -1)`, co oznacza, że dodatnie $c_z$ z raportu to fizyczny docisk (downforce).
+- $C_d$ auta $\approx 1.186$, Downforce $\approx 3.677$ ($C_l = -3.677$), $L/D \approx 3.10$.
 
-- [ ] `aeropack.json` powstaje z folderu bez ręcznego przepisywania residuali
-- [ ] `warnings[]` mówi, czego nie znaleziono (np. brak `.pzmcontrol`)
-- [ ] `geometry.yaml` ma karty FW/RW/floor/diffuser (nawet z `TBD` przy profilu)
-- [ ] `images/index.json` ma ~1500 wpisów z osią i stacją albo jasny błąd nazewnictwa
-- [ ] recenzent zwraca werdykt z cytatami (y+, continuity, stacja X, id urządzenia)
-- [ ] w packu jest jawne: half-model, yaw 0, konwencja sił, Aref
+---
+
+## 15. Definition of done (lokalnie) — ZREALIZOWANE
+
+Dla case’a half-car yaw 0 (PM09 Baseline002):
+
+- [x] `aeropack.json` powstaje z folderu bez ręcznego przepisywania residuali (`ingest/pack.py`).
+- [x] `warnings[]` mówi, czego nie znaleziono (brak `.jou`, memory allocation Metis).
+- [x] `geometry.yaml` ma karty FW/RW/floor/diffuser/hoop/wheels zmierzone ze STEP-a.
+- [x] `images/index.json` ma 1920 wpisów z osią, stacją w metrach i hero klatkami.
+- [x] recenzent zwraca werdykt z cytatami (y+, continuity, stacja X, id urządzenia).
+- [x] w packu jest jawne: half-model, yaw 0, konwencja sił, Aref.
