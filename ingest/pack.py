@@ -16,12 +16,52 @@ from ingest.wall_forces import group_for, load_component_forces
 SCHEMA = "aeropack/v1"
 TEMPLATE_GEOMETRY = Path(__file__).resolve().parent.parent / "templates" / "geometry.yaml"
 
-# Właściciel: Aref 0.5 m² na połowę, Z do góry. cx/cz z rfile to już współczynniki.
+# Domyślne tylko gdy case ani geometry.yaml ich nie podają. Pack oznacza je jako assumed.
 AREF_M2 = 0.5
 AREF_BASIS = "half"
 Z_POSITIVE = "up"
 SPEED_MS = 15.0
 RHO = 1.225
+MU = 1.789e-5
+
+
+def _load_yaml(path: Path | None) -> dict:
+    if path is None or not path.exists():
+        return {}
+    try:
+        import yaml
+    except ImportError:
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def _num(value) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _geometry_summary(doc: dict, source: str) -> dict:
+    devices = doc.get("devices") if isinstance(doc.get("devices"), list) else []
+    cards = [item for item in devices if isinstance(item, dict)]
+    with_chord = sum(1 for item in cards if _num(item.get("chordMm")) is not None)
+    profiles_tbd = sum(1 for item in cards if item.get("profile") in (None, "TBD"))
+    if not cards:
+        status = "brak kart urządzeń"
+    else:
+        card_word = "karta" if len(cards) == 1 else "kart"
+        profile_word = "profil TBD" if profiles_tbd == 1 else "profili TBD"
+        status = f"{len(cards)} {card_word}, {with_chord} z cięciwą, {profiles_tbd} {profile_word}"
+    return {
+        "source": source,
+        "status": status,
+        "deviceCount": len(cards),
+        "withChord": with_chord,
+        "profilesTbd": profiles_tbd,
+    }
 
 
 def _abs(root: Path, rels: list[str]) -> list[Path]:
@@ -49,7 +89,17 @@ def _force_files(case_root: Path, out_dir: Path, report_rels: list[str]) -> list
     return found
 
 
-def interpret_kpis(cx, cz, cm, setup: dict) -> tuple[dict, list[str]]:
+def interpret_kpis(
+    cx,
+    cz,
+    cm,
+    setup: dict,
+    *,
+    aref_m2: float = AREF_M2,
+    aref_basis: str = AREF_BASIS,
+    speed_ms: float = SPEED_MS,
+    rho: float = RHO,
+) -> tuple[dict, list[str]]:
     warnings: list[str] = []
     meaning = setup.get("czPositiveMeans")
     cx_vec = setup.get("cxForceVector")
@@ -76,11 +126,11 @@ def interpret_kpis(cx, cz, cm, setup: dict) -> tuple[dict, list[str]]:
 
     kpis = {
         "forceConvention": "half",
-        "frontalAreaM2": AREF_M2,
-        "frontalAreaBasis": AREF_BASIS,
+        "frontalAreaM2": aref_m2,
+        "frontalAreaBasis": aref_basis,
         "zPositive": Z_POSITIVE,
-        "rho": RHO,
-        "speedMs": SPEED_MS,
+        "rho": rho,
+        "speedMs": speed_ms,
         "cx": cx,
         "cz": cz,
         "cm": cm,
@@ -120,11 +170,52 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         "stationEncoded": False,
     }
 
+    case_geom = _abs(case_root, files["geometryYaml"])
+    geom_path = case_geom[0] if case_geom else (
+        TEMPLATE_GEOMETRY if TEMPLATE_GEOMETRY.exists() else None
+    )
+    geometry_doc = _load_yaml(geom_path)
+    vehicle = geometry_doc.get("vehicle") if isinstance(geometry_doc.get("vehicle"), dict) else {}
+    vehicle_name = vehicle.get("name") if isinstance(vehicle.get("name"), str) and vehicle.get("name") else None
+    aref = _num(vehicle.get("frontalAreaM2"))
+    aref_basis = vehicle.get("frontalAreaBasis") if isinstance(vehicle.get("frontalAreaBasis"), str) else AREF_BASIS
+    speed = _num(vehicle.get("speedMs"))
+    rho = _num(vehicle.get("rho"))
+    references = {
+        "speedMs": {
+            "value": speed if speed is not None else SPEED_MS,
+            "source": "geometry.yaml" if speed is not None else "assumed-constant",
+        },
+        "rho": {
+            "value": rho if rho is not None else RHO,
+            "source": "geometry.yaml" if rho is not None else "assumed-constant",
+        },
+        "mu": {"value": MU, "source": "assumed-air"},
+        "frontalAreaM2": {
+            "value": aref if aref is not None else AREF_M2,
+            "source": "geometry.yaml" if aref is not None else "assumed-constant",
+        },
+    }
+
     monitors = reports.get("monitors") or {}
     cx = (monitors.get("cx") or {}).get("averaged")
     cz = (monitors.get("cz") or {}).get("averaged")
     cm = (monitors.get("cm") or {}).get("averaged")
-    kpis, kpi_warnings = interpret_kpis(cx, cz, cm, setup)
+    kpis, kpi_warnings = interpret_kpis(
+        cx,
+        cz,
+        cm,
+        setup,
+        aref_m2=references["frontalAreaM2"]["value"],
+        aref_basis=aref_basis,
+        speed_ms=references["speedMs"]["value"],
+        rho=references["rho"]["value"],
+    )
+    kpis["references"] = references
+    if transcripts.get("residuals"):
+        reports["residuals"] = transcripts["residuals"]
+    if transcripts.get("yPlus"):
+        reports["yPlus"] = transcripts["yPlus"]
     kpis["iterations"] = reports.get("iterations")
 
     wall = load_component_forces(
@@ -179,6 +270,16 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         warnings.append(
             "Suma sił grup rozjeżdża się z Cd_total/Cl_total o więcej niż 1%."
         )
+    assumed = [
+        f"{key}={item['value']} ({item['source']})"
+        for key, item in references.items()
+        if str(item["source"]).startswith("assumed")
+    ]
+    if assumed:
+        warnings.append("Założenia nieodczytane z case'a: " + ", ".join(assumed) + ".")
+    if vehicle_name is None:
+        warnings.append("Brak vehicle.name w geometry.yaml — identity.vehicle ustawione na PM09.")
+        vehicle_name = "PM09"
 
     half = bool(transcripts.get("halfModel"))
     cz_note = (
@@ -198,10 +299,10 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         "warnings": warnings,
         "identity": {
             "caseId": case_root.name,
-            "vehicle": "PM09",
+            "vehicle": vehicle_name,
             "halfModel": half,
             "yawDeg": 0,
-            "speedMs": SPEED_MS,
+            "speedMs": references["speedMs"]["value"],
             "kind": inventory["kind"],
             "zPositive": Z_POSITIVE,
         },
@@ -233,7 +334,10 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         "reportDefinitions": setup.get("reports") or {},
         "monitors": reports,
         "kpis": kpis,
-        "geometry": {"source": "templates/geometry.yaml", "status": "vehicle-filled, devices TBD"},
+        "geometry": _geometry_summary(
+            geometry_doc,
+            str(geom_path) if geom_path else "brak",
+        ),
         "slices": {
             **(images.get("slices") or {}),
             "fields": slices.get("fields"),
@@ -247,7 +351,12 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         },
         "transcriptHits": transcripts.get("hits", [])[:60],
         "notesForAgent": [
-            "Half-model, yaw 0, jazda na wprost. Aref 0.5 m² na połowę bolidu.",
+            (
+                "Half-model, yaw 0, jazda na wprost. "
+                f"Aref {references['frontalAreaM2']['value']} m² "
+                f"({references['frontalAreaM2']['source']}, basis {aref_basis}). "
+                f"V∞ {references['speedMs']['value']} m/s ({references['speedMs']['source']})."
+            ),
             cz_note,
             "Cd = cx. Siły i Aref są na połowę — nie mnoż ×2 do współczynników.",
             "Strefy: FW=surface_fw, RW=surface_rw, Floor=surface_ut, Body=surface_mono. "
@@ -276,8 +385,10 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
     (images_dir / "index.json").write_text(
         json.dumps(heroes_only_index, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    if TEMPLATE_GEOMETRY.exists():
-        shutil.copy(TEMPLATE_GEOMETRY, out_dir / "geometry.yaml")
+    if geom_path is not None and geom_path.exists():
+        dest_geom = out_dir / "geometry.yaml"
+        if geom_path.resolve() != dest_geom.resolve():
+            shutil.copy(geom_path, dest_geom)
     slices_src = Path(__file__).resolve().parent.parent / "templates" / "slices.yaml"
     if slices_src.exists():
         shutil.copy(slices_src, out_dir / "slices.yaml")

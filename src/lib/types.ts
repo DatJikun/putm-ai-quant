@@ -49,25 +49,31 @@ export type PostImage = {
 
 export type ComponentForce = {
   name: string
-  Cd: number
-  Cl: number
-  shareDownforcePct: number
-  shareDragPct: number
+  Cd: number | null
+  Cl: number | null
+  shareDownforcePct: number | null
+  shareDragPct: number | null
+}
+
+export type YPlusStats = {
+  min: number | null
+  avg: number | null
+  max: number | null
 }
 
 export type CadModel = {
   name: string
   format: string
-  triangles: number
-  wheelbaseMm: number
-  trackMm: number
-  lengthMm: number
-  widthMm: number
-  heightMm: number
-  frontalAreaM2: number
-  rideHeightFrontMm: number
-  rideHeightRearMm: number
-  rakeDeg: number
+  triangles: number | null
+  wheelbaseMm: number | null
+  trackMm: number | null
+  lengthMm: number | null
+  widthMm: number | null
+  heightMm: number | null
+  frontalAreaM2: number | null
+  rideHeightFrontMm: number | null
+  rideHeightRearMm: number | null
+  rakeDeg: number | null
   components: string[]
 }
 
@@ -79,34 +85,36 @@ export type FluentCase = {
   solver: string
   turbulence: string
   wallTreatment: string
-  cellsM: number
-  speedMs: number
+  cellsM: number | null
+  speedMs: number | null
   yawDeg: number
-  rho: number
-  mu: number
-  referenceAreaM2: number
-  referenceLengthM: number
-  iterations: number
+  rho: number | null
+  mu: number | null
+  referenceAreaM2: number | null
+  referenceLengthM: number | null
+  iterations: number | null
   residuals: {
-    continuity: number
-    xMomentum: number
-    yMomentum: number
-    zMomentum: number
-    k: number
-    omega: number
+    continuity: number | null
+    xMomentum: number | null
+    yMomentum: number | null
+    zMomentum: number | null
+    k: number | null
+    omega: number | null
   }
-  yPlusWings: { min: number; avg: number; max: number }
-  yPlusFloor: { min: number; avg: number; max: number }
+  yPlusWings: YPlusStats | null
+  yPlusFloor: YPlusStats | null
+  minOrthogonalQuality?: number | null
+  mrfFan?: boolean
 }
 
 export type AeroKpis = {
-  Cd: number
-  Cl: number
-  Cs: number
-  LOverD: number
-  frontBalancePct: number
-  downforceN: number
-  dragN: number
+  Cd: number | null
+  Cl: number | null
+  Cs: number | null
+  LOverD: number | null
+  frontBalancePct: number | null
+  downforceN: number | null
+  dragN: number | null
   components: ComponentForce[]
 }
 
@@ -122,11 +130,11 @@ export type AgentReview = {
   verdict: "akceptowalne" | "warunkowo-akceptowalne" | "do-poprawy" | "nieufne"
   summary: string
   scores: {
-    zbieznosc: number
-    siatka: number
-    wydajnosc: number
-    balanse: number
-    pokrycieWizualne: number
+    zbieznosc: number | null
+    siatka: number | null
+    wydajnosc: number | null
+    balanse: number | null
+    pokrycieWizualne: number | null
   }
   findings: ReviewFinding[]
   questions: string[]

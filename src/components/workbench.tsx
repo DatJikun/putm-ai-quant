@@ -16,7 +16,7 @@ import {
 } from "@/lib/demo-case"
 import { evaluateCase, VERDICT_LABEL } from "@/lib/agent"
 import { buildAgentPack, packAsPrompt } from "@/lib/pack"
-import { adaptAeropack, type AdaptedPack, type AeroDevice } from "@/lib/pack-adapter"
+import { adaptAeropack, type AdaptedPack } from "@/lib/pack-adapter"
 import type { Axis, FieldId, Severity } from "@/lib/types"
 import { ContourPreview } from "@/components/contour-preview"
 import { CarSchematic } from "@/components/car-schematic"
@@ -70,17 +70,22 @@ type PackSummary = {
   isLocal?: boolean
 }
 
-function ScoreBar({ label, value }: { label: string; value: number }) {
+function fmtNum(value: number | null | undefined, digits = 2, suffix = "") {
+  if (value == null || Number.isNaN(value)) return "brak"
+  return `${value.toFixed(digits)}${suffix}`
+}
+
+function ScoreBar({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs text-muted-foreground">
         <span>{label}</span>
-        <span className="font-mono text-foreground">{value}</span>
+        <span className="font-mono text-foreground">{value == null ? "brak" : value}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
         <div
-          className="h-full rounded-full bg-[#5ee0c0]"
-          style={{ width: `${value}%` }}
+          className={`h-full rounded-full ${value == null ? "bg-white/20" : "bg-[#5ee0c0]"}`}
+          style={{ width: `${value ?? 0}%` }}
         />
       </div>
     </div>
@@ -106,6 +111,7 @@ function buildDemoAdaptedPack(): AdaptedPack {
     review,
     devices: [],
     reynolds: demoReynolds(),
+    dataGaps: [],
     rawPack: pack,
     prompt,
   }
@@ -213,8 +219,18 @@ export function Workbench() {
     reader.readAsText(file)
   }
 
-  const { fluentCase, cad, kpis, images, review, prompt, warnings, devices, notesForAgent } =
-    packData
+  const {
+    fluentCase,
+    cad,
+    kpis,
+    images,
+    review,
+    prompt,
+    warnings,
+    devices,
+    notesForAgent,
+    dataGaps,
+  } = packData
   const stats = useMemo(() => catalogStats(images), [images])
   const heroes = useMemo(() => images.filter((i) => i.hero), [images])
 
@@ -280,7 +296,7 @@ export function Workbench() {
           )}
 
           <span className="hidden text-xs text-muted-foreground sm:inline">
-            · {fluentCase.cellsM}M komórek · {fluentCase.iterations} iter. · {stats.total} klatek
+            · {fmtNum(fluentCase.cellsM, 2)}M komórek · {fluentCase.iterations ?? "brak"} iter. · {stats.total} klatek
           </span>
         </div>
 
@@ -361,7 +377,7 @@ export function Workbench() {
                 </p>
                 <p className="pt-2 text-muted-foreground">{fluentCase.solver}</p>
                 <p className="text-foreground">
-                  {fluentCase.cellsM} mln komórek · {fluentCase.iterations} iter.
+                  {fmtNum(fluentCase.cellsM, 2)} mln komórek · {fluentCase.iterations ?? "brak"} iter.
                 </p>
                 <p className="text-muted-foreground">{fluentCase.wallTreatment}</p>
               </CardContent>
@@ -377,10 +393,11 @@ export function Workbench() {
                   {cad.name}
                 </p>
                 <p>
-                  Rozstaw {cad.wheelbaseMm} mm · Aref = {cad.frontalAreaM2} m²
+                  Rozstaw {fmtNum(cad.wheelbaseMm, 0)} mm · Aref = {fmtNum(cad.frontalAreaM2, 2)} m²
                 </p>
                 <p>
-                  RH {cad.rideHeightFrontMm}/{cad.rideHeightRearMm} mm · rake {cad.rakeDeg}°
+                  RH {fmtNum(cad.rideHeightFrontMm, 0)}/{fmtNum(cad.rideHeightRearMm, 0)} mm · rake{" "}
+                  {fmtNum(cad.rakeDeg, 2)}°
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {devices.length > 0
@@ -411,6 +428,17 @@ export function Workbench() {
               </CardContent>
             </Card>
           </div>
+
+          {dataGaps.length > 0 && (
+            <div className="rounded-lg border border-orange-500/40 bg-orange-500/10 p-3.5 text-orange-100">
+              <p className="font-medium">Pola, których nie uzupełniono ({dataGaps.length})</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-orange-100/90">
+                {dataGaps.map((gap) => (
+                  <li key={gap}>{gap}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {notesForAgent.length > 0 && (
             <Card>
@@ -587,10 +615,10 @@ export function Workbench() {
         <TabsContent value="kpi" className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              ["Cl (downforce)", Math.abs(kpis.Cl).toFixed(2)],
-              ["Cd (drag)", kpis.Cd.toFixed(2)],
-              ["L/D (efektywność)", kpis.LOverD.toFixed(2)],
-              ["balans przód", `${kpis.frontBalancePct} %`],
+              ["Cl (downforce)", kpis.Cl == null ? "brak" : Math.abs(kpis.Cl).toFixed(2)],
+              ["Cd (drag)", fmtNum(kpis.Cd, 2)],
+              ["L/D (efektywność)", fmtNum(kpis.LOverD, 2)],
+              ["balans przód", kpis.frontBalancePct == null ? "brak" : `${kpis.frontBalancePct} %`],
             ].map(([label, value]) => (
               <Card key={label} size="sm">
                 <CardHeader>
@@ -602,9 +630,10 @@ export function Workbench() {
           </div>
 
           <p className="text-sm text-muted-foreground">
-            {kpis.downforceN.toFixed(0)} N downforce / {kpis.dragN.toFixed(0)} N drag przy{" "}
-            {fluentCase.speedMs} m/s (konwencja {packData.rawPack?.kpis?.forceConvention || "half-model"}) · Re ≈{" "}
-            {(packData.reynolds / 1e6).toFixed(2)}×10<sup>6</sup>
+            {fmtNum(kpis.downforceN, 0)} N downforce / {fmtNum(kpis.dragN, 0)} N drag przy{" "}
+            {fluentCase.speedMs ?? "brak"} m/s (konwencja {packData.rawPack?.kpis?.forceConvention || "half-model"}) · Re ≈{" "}
+            {packData.reynolds == null ? "brak" : `${(packData.reynolds / 1e6).toFixed(2)}×10`}
+            {packData.reynolds != null && <sup>6</sup>}
           </p>
 
           <Card>
@@ -627,15 +656,25 @@ export function Workbench() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {kpis.components.map((c) => (
-                      <TableRow key={c.name}>
-                        <TableCell className="font-medium">{c.name}</TableCell>
-                        <TableCell className="font-mono">{Math.abs(c.Cl).toFixed(2)}</TableCell>
-                        <TableCell className="font-mono">{c.Cd.toFixed(2)}</TableCell>
-                        <TableCell className="font-mono">{c.shareDownforcePct}%</TableCell>
-                        <TableCell className="font-mono">{c.shareDragPct}%</TableCell>
+                    {kpis.components.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-muted-foreground">
+                          Brak podziału sił po strefach. To nie jest zestaw z dema — pole zostaje puste.
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      kpis.components.map((c) => (
+                        <TableRow key={c.name}>
+                          <TableCell className="font-medium">{c.name}</TableCell>
+                          <TableCell className="font-mono">
+                            {c.Cl == null ? "brak" : Math.abs(c.Cl).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="font-mono">{fmtNum(c.Cd, 2)}</TableCell>
+                          <TableCell className="font-mono">{fmtNum(c.shareDownforcePct, 1, "%")}</TableCell>
+                          <TableCell className="font-mono">{fmtNum(c.shareDragPct, 1, "%")}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </div>
@@ -711,12 +750,23 @@ export function Workbench() {
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2 font-mono text-xs sm:grid-cols-2">
-              <p>continuity: {fluentCase.residuals.continuity.toExponential(2)}</p>
-              <p>x-mom: {fluentCase.residuals.xMomentum.toExponential(2)}</p>
               <p>
-                y+ skrzydła: avg {fluentCase.yPlusWings.avg} (max {fluentCase.yPlusWings.max})
+                continuity:{" "}
+                {fluentCase.residuals.continuity == null
+                  ? "brak"
+                  : fluentCase.residuals.continuity.toExponential(2)}
               </p>
-              <p>y+ podłoga: avg {fluentCase.yPlusFloor.avg}</p>
+              <p>
+                x-mom:{" "}
+                {fluentCase.residuals.xMomentum == null
+                  ? "brak"
+                  : fluentCase.residuals.xMomentum.toExponential(2)}
+              </p>
+              <p>
+                y+ skrzydła: avg {fmtNum(fluentCase.yPlusWings?.avg, 2)} (max{" "}
+                {fmtNum(fluentCase.yPlusWings?.max, 2)})
+              </p>
+              <p>y+ podłoga: avg {fmtNum(fluentCase.yPlusFloor?.avg, 2)}</p>
               <p>model: {fluentCase.turbulence}</p>
               <p>warstwa: {fluentCase.wallTreatment}</p>
             </CardContent>

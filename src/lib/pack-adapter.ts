@@ -1,4 +1,4 @@
-import { evaluateCase } from "./agent"
+import { evaluateCase, type ReviewDevice } from "./agent"
 import type {
   AeroKpis,
   AgentReview,
@@ -40,9 +40,31 @@ export type AdaptedPack = {
   images: PostImage[]
   review: AgentReview
   devices: AeroDevice[]
-  reynolds: number
+  reynolds: number | null
+  dataGaps: string[]
   rawPack: any
   prompt: string
+}
+
+function num(value: unknown): number | null {
+  if (typeof value === "boolean" || value == null || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function fmt(value: number | null, digits = 2, suffix = "") {
+  if (value == null) return "brak"
+  return `${value.toFixed(digits)}${suffix}`
+}
+
+function readYPlus(block: unknown) {
+  if (!block || typeof block !== "object") return null
+  const source = block as Record<string, unknown>
+  const min = num(source.min)
+  const avg = num(source.avg)
+  const max = num(source.max)
+  if (min == null && avg == null && max == null) return null
+  return { min, avg, max }
 }
 
 function mapRegion(axis: Axis, stationM: number | null, filename: string): RegionId {
@@ -86,6 +108,30 @@ function mapField(fieldStr?: string): FieldId {
   if (low.includes("tke")) return "tke"
   if (low.includes("helicity")) return "helicity"
   return "cpt"
+}
+
+export function parseVehicleYaml(yamlStr?: string): Record<string, string | number | null> {
+  if (!yamlStr) return {}
+  const lines = yamlStr.split(/\r?\n/)
+  let inVehicle = false
+  const vehicle: Record<string, string | number | null> = {}
+  for (const line of lines) {
+    if (/^vehicle:\s*$/.test(line)) {
+      inVehicle = true
+      continue
+    }
+    if (inVehicle && /^[a-zA-Z]/.test(line)) break
+    if (!inVehicle) continue
+    const propMatch = line.match(/^\s+([a-zA-Z0-9_]+):\s*(.*)$/)
+    if (!propMatch) continue
+    let val = propMatch[2].trim()
+    if (val.includes("#") && !val.startsWith('"')) val = val.split("#")[0].trim()
+    if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1)
+    if (val === "null" || val === "TBD" || val === "") vehicle[propMatch[1]] = null
+    else if (!Number.isNaN(Number(val))) vehicle[propMatch[1]] = Number(val)
+    else vehicle[propMatch[1]] = val
+  }
+  return vehicle
 }
 
 export function parseGeometryYaml(yamlStr?: string): AeroDevice[] {
@@ -170,59 +216,75 @@ export function adaptAeropack(
     : []
 
   const caseId = identity.caseId || "unnamed-case"
-  const vehicleName = identity.vehicle || "PM09"
-  const speedMs = Number(identity.speedMs || kpisRaw.speedMs || 15.0)
-  const rho = Number(kpisRaw.rho || 1.225)
-  const mu = 1.789e-5
+  const vehicleYaml = parseVehicleYaml(geometryYamlStr)
+  const vehicleName =
+    (typeof identity.vehicle === "string" && identity.vehicle) ||
+    (typeof vehicleYaml.name === "string" && vehicleYaml.name) ||
+    "nieznany bolid"
+  const speedMs = num(identity.speedMs) ?? num(kpisRaw.speedMs)
+  const rho = num(kpisRaw.rho)
+  const mu = num(kpisRaw.references?.mu?.value) ?? num(kpisRaw.mu)
   const halfModel = Boolean(identity.halfModel)
-  const frontalArea = Number(kpisRaw.frontalAreaM2 || 0.5)
-  const wheelbaseM = 1.55
+  const frontalArea = num(kpisRaw.frontalAreaM2) ?? num(vehicleYaml.frontalAreaM2)
+  const wheelbaseMm = num(vehicleYaml.wheelbaseMm)
+  const wheelbaseM = wheelbaseMm == null ? null : wheelbaseMm / 1000
+  const dataGaps: string[] = []
 
-  // FluentCase
   const casFiles = Array.isArray(files.cas) ? files.cas : []
   const datFiles = Array.isArray(files.dat) ? files.dat : []
-  const cellsCount = Number(mesh.cells || 0)
-  const cellsM = +(cellsCount / 1e6).toFixed(2)
-  const iterations = Number(monitors.iterations || kpisRaw.iterations || 0)
+  const cellsCount = num(mesh.cells)
+  const cellsM = cellsCount == null ? null : +(cellsCount / 1e6).toFixed(2)
+  const iterations = num(monitors.iterations) ?? num(kpisRaw.iterations)
 
-  const rawResids = (monitors.monitors?.residuals) || monitors.residuals || {}
+  const rawResids = monitors.residuals || monitors.monitors?.residuals || {}
   const residuals = {
-    continuity: Number(rawResids.continuity || 1.2e-4),
-    xMomentum: Number(rawResids.xMomentum || rawResids.x_velocity || 1e-5),
-    yMomentum: Number(rawResids.yMomentum || rawResids.y_velocity || 1e-5),
-    zMomentum: Number(rawResids.zMomentum || rawResids.z_velocity || 1e-5),
-    k: Number(rawResids.k || 2.5e-5),
-    omega: Number(rawResids.omega || 2.5e-5),
+    continuity: num(rawResids.continuity),
+    xMomentum: num(rawResids.xMomentum) ?? num(rawResids.x_velocity),
+    yMomentum: num(rawResids.yMomentum) ?? num(rawResids.y_velocity),
+    zMomentum: num(rawResids.zMomentum) ?? num(rawResids.z_velocity),
+    k: num(rawResids.k),
+    omega: num(rawResids.omega),
   }
+  const yPlusBlock = monitors.yPlus || {}
+  const yPlusWings = readYPlus(yPlusBlock.wings)
+  const yPlusFloor = readYPlus(yPlusBlock.floor)
+
+  if (cellsM == null) dataGaps.push("Liczba komórek nie została odczytana z transcriptu.")
+  if (iterations == null) dataGaps.push("Liczba iteracji nie została odczytana z monitorów.")
+  if (residuals.continuity == null) dataGaps.push("Brak residualu continuity.")
+  if (yPlusWings == null && yPlusFloor == null) dataGaps.push("Brak statystyk y+.")
+  if (speedMs == null) dataGaps.push("Brak V∞.")
+  if (frontalArea == null) dataGaps.push("Brak Aref.")
 
   const fluentCase: FluentCase = {
     id: caseId,
     name: `${vehicleName} · ${caseId} (${halfModel ? "half-model yaw 0°" : "full car"})`,
-    casFile: casFiles[0] || `${caseId}.cas.h5`,
-    datFile: datFiles[0] || `${caseId}.dat.h5`,
-    solver: `${methods.fluentVersion ? "Fluent " + methods.fluentVersion : "Fluent"}, ${
+    casFile: casFiles[0] || "brak .cas",
+    datFile: datFiles[0] || "brak .dat",
+    solver: `${methods.fluentVersion ? "Fluent " + methods.fluentVersion : "Fluent (wersja nieodczytana)"}, ${
       halfModel ? "pół bolidu (symetria)" : "pełny bolid"
     }, yaw ${identity.yawDeg ?? 0}°`,
-    turbulence: methods.turbulence || "k-ω SST",
+    turbulence: methods.turbulence || "nieodczytany",
     wallTreatment: mesh.scopedPrisms
       ? "scoped prisms (meshing)"
       : mesh.prismStairstepLocations != null
       ? `prisms (stairstep: ${mesh.prismStairstepLocations})`
-      : "standard prism layers",
-    cellsM: cellsM || 11.32,
+      : "nieodczytana",
+    cellsM,
     speedMs,
     yawDeg: Number(identity.yawDeg || 0),
     rho,
     mu,
     referenceAreaM2: frontalArea,
     referenceLengthM: wheelbaseM,
-    iterations: iterations || 1840,
+    iterations,
     residuals,
-    yPlusWings: { min: 0.3, avg: 1.2, max: 4.8 },
-    yPlusFloor: { min: 0.4, avg: 1.6, max: 6.2 },
+    yPlusWings,
+    yPlusFloor,
+    minOrthogonalQuality: num(mesh.minOrthogonalQuality),
+    mrfFan: Boolean(methods.mrfFan),
   }
 
-  // Component breakdown
   const compGroups = kpisRaw.components?.groups || {}
   const components: ComponentForce[] = []
   const groupNameLabels: Record<string, string> = {
@@ -235,73 +297,78 @@ export function adaptAeropack(
   }
 
   for (const [key, val] of Object.entries<any>(compGroups)) {
+    const shareDownforce = num(val.shareDownforcePct)
+    const shareDrag = num(val.shareDragPct)
     components.push({
       name: groupNameLabels[key] || key.toUpperCase(),
-      Cd: Number(val.Cd || 0),
-      Cl: Number(val.Cl || 0),
-      shareDownforcePct: Number((val.shareDownforcePct ?? 0).toFixed(1)),
-      shareDragPct: Number((val.shareDragPct ?? 0).toFixed(1)),
+      Cd: num(val.Cd),
+      Cl: num(val.Cl),
+      shareDownforcePct: shareDownforce == null ? null : Number(shareDownforce.toFixed(1)),
+      shareDragPct: shareDrag == null ? null : Number(shareDrag.toFixed(1)),
     })
   }
-
   if (components.length === 0) {
-    components.push(
-      { name: "Front wing", Cd: 0.26, Cl: -1.64, shareDownforcePct: 44.5, shareDragPct: 21.6 },
-      { name: "Rear wing", Cd: 0.45, Cl: -1.04, shareDownforcePct: 28.4, shareDragPct: 37.6 },
-      { name: "Floor + diffuser", Cd: 0.11, Cl: -0.70, shareDownforcePct: 18.9, shareDragPct: 9.5 },
-      { name: "Body + hoop", Cd: 0.28, Cl: -0.42, shareDownforcePct: 11.3, shareDragPct: 23.7 },
-      { name: "Wheels", Cd: 0.12, Cl: 0.10, shareDownforcePct: -2.7, shareDragPct: 10.4 },
-    )
+    dataGaps.push("Brak sił po strefach.")
   }
 
-  // Calculate global KPIs
-  const qDyn = 0.5 * rho * speedMs * speedMs
-  const cdVal = Number(kpisRaw.Cd ?? kpisRaw.cx ?? 1.186)
-  const clVal = Number(kpisRaw.Cl ?? (kpisRaw.downforceCoeff ? -kpisRaw.downforceCoeff : -3.677))
-  const downforceCoeff = Math.abs(clVal)
-  const lOverD = Number(kpisRaw.LOverD ?? (cdVal > 0 ? downforceCoeff / cdVal : 3.1))
+  const qDyn = rho != null && speedMs != null ? 0.5 * rho * speedMs * speedMs : null
+  const cdVal = num(kpisRaw.Cd) ?? num(kpisRaw.cx)
+  const explicitCl = num(kpisRaw.Cl)
+  const downforceFromPack = num(kpisRaw.downforceCoeff)
+  const clVal = explicitCl ?? (downforceFromPack == null ? null : -downforceFromPack)
+  const downforceCoeff = clVal == null ? null : Math.abs(clVal)
+  const lOverD =
+    num(kpisRaw.LOverD) ??
+    (cdVal != null && downforceCoeff != null && cdVal !== 0 ? downforceCoeff / cdVal : null)
 
-  // Front balance: FW downforce share on wings or total
   const fwGroup = compGroups.fw
   const rwGroup = compGroups.rw
-  let frontBalancePct = 42
-  if (fwGroup && rwGroup && (fwGroup.downforceCoeff || fwGroup.Fz) && (rwGroup.downforceCoeff || rwGroup.Fz)) {
-    const fwDf = Math.abs(Number(fwGroup.downforceCoeff || fwGroup.Fz || 0))
-    const rwDf = Math.abs(Number(rwGroup.downforceCoeff || rwGroup.Fz || 0))
-    if (fwDf + rwDf > 0) {
-      frontBalancePct = Math.round((fwDf / (fwDf + rwDf)) * 100)
-    }
-  } else if (fwGroup?.shareDownforcePct) {
-    frontBalancePct = Math.round(Number(fwGroup.shareDownforcePct))
+  let frontBalancePct: number | null = null
+  const fwDf = Math.abs(num(fwGroup?.downforceCoeff) ?? num(fwGroup?.Fz) ?? NaN)
+  const rwDf = Math.abs(num(rwGroup?.downforceCoeff) ?? num(rwGroup?.Fz) ?? NaN)
+  if (Number.isFinite(fwDf) && Number.isFinite(rwDf) && fwDf + rwDf > 0) {
+    frontBalancePct = Math.round((fwDf / (fwDf + rwDf)) * 100)
+  } else if (num(fwGroup?.shareDownforcePct) != null && num(rwGroup?.shareDownforcePct) != null) {
+    const fwShare = num(fwGroup.shareDownforcePct) as number
+    const rwShare = num(rwGroup.shareDownforcePct) as number
+    if (fwShare + rwShare > 0) frontBalancePct = Math.round((fwShare / (fwShare + rwShare)) * 100)
   }
+  if (cdVal == null) dataGaps.push("Brak Cd.")
+  if (clVal == null) dataGaps.push("Brak Cl.")
+  if (frontBalancePct == null) dataGaps.push("Brak balansu przód/tył (nie ma pary FW i RW).")
 
   const kpis: AeroKpis = {
     Cd: cdVal,
     Cl: clVal,
-    Cs: 0.0,
+    Cs: num(kpisRaw.Cs),
     LOverD: lOverD,
     frontBalancePct,
-    downforceN: downforceCoeff * qDyn * frontalArea,
-    dragN: cdVal * qDyn * frontalArea,
+    downforceN:
+      downforceCoeff != null && qDyn != null && frontalArea != null
+        ? downforceCoeff * qDyn * frontalArea
+        : null,
+    dragN: cdVal != null && qDyn != null && frontalArea != null ? cdVal * qDyn * frontalArea : null,
     components,
   }
 
-  // CAD model representation
   const cadFiles = Array.isArray(files.cad) ? files.cad : []
   const cadModel: CadModel = {
-    name: cadFiles[1] || cadFiles[0] || `${vehicleName}.STEP`,
-    format: "STEP / SpaceClaim",
-    triangles: 1_250_000,
-    wheelbaseMm: 1550,
-    trackMm: 1200,
-    lengthMm: 2860,
-    widthMm: 1200,
-    heightMm: 1090,
+    name: cadFiles[0] || (typeof vehicleYaml.name === "string" ? `${vehicleYaml.name}.STEP` : "brak CAD"),
+    format: "STEP",
+    triangles: null,
+    wheelbaseMm,
+    trackMm: num(vehicleYaml.trackMm),
+    lengthMm: null,
+    widthMm: null,
+    heightMm: null,
     frontalAreaM2: frontalArea,
-    rideHeightFrontMm: 25,
-    rideHeightRearMm: 32,
-    rakeDeg: 0.25,
+    rideHeightFrontMm: num(vehicleYaml.rideHeightFrontMm),
+    rideHeightRearMm: num(vehicleYaml.rideHeightRearMm),
+    rakeDeg: num(vehicleYaml.rakeDeg),
     components: components.map((c) => c.name),
+  }
+  if (cadModel.rideHeightFrontMm == null || cadModel.rideHeightRearMm == null) {
+    dataGaps.push("Brak ride height w geometry.yaml.")
   }
 
   // Images mapping
@@ -341,53 +408,63 @@ export function adaptAeropack(
     devices = parseGeometryYaml(geometryYamlStr)
   }
 
-  // Evaluation
-  const review = evaluateCase(fluentCase, kpis, cadModel, images)
+  const reviewDevices: ReviewDevice[] = devices.map((device) => ({
+    id: device.id,
+    role: device.role,
+    group: device.group,
+  }))
+  const review = evaluateCase(fluentCase, kpis, cadModel, images, reviewDevices)
 
-  // Append findings from real pack warnings
-  for (const warn of warnings) {
-    review.findings.push({
-      id: `pack-warn-${Math.abs(warn.length)}`,
-      severity: warn.toLowerCase().includes("memory") || warn.toLowerCase().includes("brak wektor") ? "issue" : "watch",
-      title: "Wykryty stan w case Fluent / Ingest",
-      evidence: warn,
-      recommendation: "Zweryfikuj obecność journala i poprawność alokacji pamięci solvera.",
-    })
-  }
-
-  if (kpisRaw.checksum?.ok) {
+  const checksum = kpisRaw.components?.checksum || kpisRaw.checksum
+  if (checksum?.ok && num(checksum.cdRelErr) != null && num(checksum.clRelErr) != null) {
     review.findings.push({
       id: "force-checksum",
       severity: "info",
       title: "Suma sił stref jest spójna z globalnymi współczynnikami",
-      evidence: `Błąd względny Cd: ${(kpisRaw.checksum.cdRelErr * 100).toFixed(3)}%, błąd Cl: ${(kpisRaw.checksum.clRelErr * 100).toFixed(3)}% (poniżej tolerancji 1%).`,
+      evidence: `Błąd względny Cd: ${((checksum.cdRelErr as number) * 100).toFixed(3)}%, błąd Cl: ${((checksum.clRelErr as number) * 100).toFixed(3)}% (poniżej tolerancji 1%).`,
       recommendation: "Podział sił na komponenty jest zbilansowany numerycznie.",
+    })
+  } else if (checksum && checksum.ok === false) {
+    review.findings.push({
+      id: "force-checksum",
+      severity: "issue",
+      title: "Suma sił stref rozjeżdża się z Cd/Cl",
+      evidence: "checksum.ok jest false. Udziały komponentów nie domykają się do współczynników globalnych.",
+      recommendation: "Nie używaj podziału na FW/RW/podłogę, dopóki suma nie zejdzie poniżej 1%.",
     })
   }
 
-  const reynoldsVal = calcReynolds(rho, speedMs, wheelbaseM, mu)
+  const reynoldsVal =
+    rho != null && speedMs != null && wheelbaseM != null
+      ? calcReynolds(rho, speedMs, wheelbaseM, mu ?? 1.789e-5)
+      : null
 
-  // Prompt representation
   const prompt = [
     `# AeroPack v1 — recenzja case CFD Formula Student (${caseId})`,
     "",
     ...notesForAgent.map((n) => `- ${n}`),
     "",
+    "## Luki danych",
+    ...(dataGaps.length ? dataGaps.map((gap) => `- ${gap}`) : ["- brak"]),
+    "",
     "## Identyfikacja i siatka",
     `- Bolid: ${vehicleName} (${halfModel ? "half-model yaw 0°" : "full-car"})`,
     `- Solver: ${fluentCase.solver}`,
-    `- Siatka: ${cellsM} mln komórek, ${methods.scopedPrisms ? "scoped prisms" : "warstwy przyścienne"}`,
-    `- Przebieg: ${iterations} iteracji, zbieżność continuity ${residuals.continuity.toExponential(2)}`,
+    `- Siatka: ${fmt(cellsM, 2)} mln komórek, warstwa: ${fluentCase.wallTreatment}`,
+    `- Przebieg: ${iterations ?? "brak"} iteracji, continuity ${residuals.continuity == null ? "brak" : residuals.continuity.toExponential(2)}`,
     "",
     "## Współczynniki aerodynamiki",
-    `- Cd = ${cdVal.toFixed(3)}, Cl = ${clVal.toFixed(3)} (Downforce = ${downforceCoeff.toFixed(3)})`,
-    `- L/D = ${lOverD.toFixed(2)}, balans przód = ${frontBalancePct}%`,
-    `- Siły przy ${speedMs} m/s: downforce ${kpis.downforceN.toFixed(0)} N, drag ${kpis.dragN.toFixed(0)} N`,
+    `- Cd = ${fmt(cdVal, 3)}, Cl = ${fmt(clVal, 3)}, downforce coeff = ${fmt(downforceCoeff, 3)}`,
+    `- L/D = ${fmt(lOverD, 2)}, balans przód = ${frontBalancePct == null ? "brak" : `${frontBalancePct}%`}`,
+    `- Siły przy ${speedMs ?? "brak"} m/s: downforce ${fmt(kpis.downforceN, 0)} N, drag ${fmt(kpis.dragN, 0)} N`,
     "",
     "## Udział komponentów",
-    ...components.map(
-      (c) => `- ${c.name}: DF share ${c.shareDownforcePct}%, Drag share ${c.shareDragPct}%, Cl ${c.Cl.toFixed(2)}, Cd ${c.Cd.toFixed(2)}`
-    ),
+    ...(components.length
+      ? components.map(
+          (c) =>
+            `- ${c.name}: DF share ${fmt(c.shareDownforcePct, 1, "%")}, Drag share ${fmt(c.shareDragPct, 1, "%")}, Cl ${fmt(c.Cl, 2)}, Cd ${fmt(c.Cd, 2)}`,
+        )
+      : ["- brak podziału na strefy"]),
     "",
     `## Klatki post-processingu (${images.filter((i) => i.hero).length} hero do wglądu)`,
     ...images
@@ -395,7 +472,7 @@ export function adaptAeropack(
       .slice(0, 20)
       .map((h) => `- [HERO] ${h.filename} (${h.axis}, ${h.field}${h.stationM != null ? `, stacja ${h.stationM}m` : ""})`),
     "",
-    "Dołączone są wyłącznie ramki oznaczone hero. Reszta katalogu to indeks — model może dopytać o stację przez tool calling.",
+    "Puste pola zostają puste. Nie uzupełniaj ich liczbami z innego case'a ani z pikseli.",
   ].join("\n")
 
   return {
@@ -411,6 +488,7 @@ export function adaptAeropack(
     review,
     devices,
     reynolds: reynoldsVal,
+    dataGaps,
     rawPack: raw,
     prompt,
   }

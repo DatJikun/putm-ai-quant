@@ -54,8 +54,13 @@ export const cad: CadModel = {
   ],
 }
 
-const qDyn =
-  0.5 * fluentCase.rho * fluentCase.speedMs * fluentCase.speedMs
+const demoRho = fluentCase.rho as number
+const demoSpeed = fluentCase.speedMs as number
+const demoArea = fluentCase.referenceAreaM2 as number
+const demoLength = fluentCase.referenceLengthM as number
+const demoMu = fluentCase.mu as number
+
+const qDyn = 0.5 * demoRho * demoSpeed * demoSpeed
 
 export const kpis: AeroKpis = {
   Cd: 1.42,
@@ -63,8 +68,8 @@ export const kpis: AeroKpis = {
   Cs: 0.01,
   LOverD: 3.65 / 1.42,
   frontBalancePct: 41,
-  downforceN: 3.65 * qDyn * fluentCase.referenceAreaM2,
-  dragN: 1.42 * qDyn * fluentCase.referenceAreaM2,
+  downforceN: 3.65 * qDyn * demoArea,
+  dragN: 1.42 * qDyn * demoArea,
   components: [
     { name: "Front wing", Cd: 0.28, Cl: -1.12, shareDownforcePct: 31, shareDragPct: 20 },
     { name: "Floor + diffuser", Cd: 0.19, Cl: -1.45, shareDownforcePct: 40, shareDragPct: 13 },
@@ -75,10 +80,7 @@ export const kpis: AeroKpis = {
 }
 
 export function reynolds() {
-  return (
-    (fluentCase.rho * fluentCase.speedMs * fluentCase.referenceLengthM) /
-    fluentCase.mu
-  )
+  return (demoRho * demoSpeed * demoLength) / demoMu
 }
 
 export function getDemoImages() {
