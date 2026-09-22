@@ -1,39 +1,44 @@
-/** JSON Schema-shaped contract for AeroPack v1 (documentation + runtime type). */
-export const aeropackSchema = {
+/**
+ * Kontrakt pliku zapisywanego przez `ingest/pack.py`.
+ * Osobny kształt `AgentPack` w `types.ts` jest widokiem dema FS-26, nie tym plikiem.
+ */
+export const ingestAeropackSchema = {
   $id: "aeropack/v1",
   type: "object",
-  required: [
-    "schema",
-    "case",
-    "cad",
-    "kpis",
-    "imageCatalog",
-    "heroFrames",
-    "notesForAgent",
-  ],
+  required: ["schema", "warnings", "identity", "kpis", "notesForAgent"],
   properties: {
     schema: { const: "aeropack/v1" },
-    case: {
+    warnings: { type: "array", items: { type: "string" } },
+    identity: {
       type: "object",
-      required: ["casFile", "datFile", "turbulence", "residuals", "yPlusWings"],
+      required: ["caseId", "vehicle", "halfModel", "yawDeg"],
     },
-    cad: {
+    monitors: {
       type: "object",
-      required: [
-        "wheelbaseMm",
-        "frontalAreaM2",
-        "rideHeightFrontMm",
-        "components",
-      ],
+      properties: {
+        iterations: { type: ["integer", "null"] },
+        residuals: { type: "object" },
+        yPlus: { type: "object" },
+      },
     },
     kpis: {
       type: "object",
-      required: ["Cd", "Cl", "LOverD", "frontBalancePct", "components"],
+      properties: {
+        Cd: { type: ["number", "null"] },
+        Cl: { type: ["number", "null"] },
+        references: { type: "object" },
+      },
     },
-    imageCatalog: {
+    geometry: {
       type: "object",
-      required: ["total", "byAxis", "heroCount"],
+      required: ["status", "deviceCount"],
     },
-    heroFrames: { type: "array", maxItems: 32 },
+    images: {
+      type: "object",
+      properties: {
+        total: { type: "integer" },
+        hero: { type: "array" },
+      },
+    },
   },
 } as const

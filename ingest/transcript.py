@@ -23,10 +23,117 @@ SST_RE = re.compile(r"k-omega|k-ω|SST|Spalart|Realizable k-e", re.I)
 MRF_RE = re.compile(r"mrf_fan", re.I)
 MEMORY_RE = re.compile(r"Memory allocation failed", re.I)
 YPLUS_WRITE_RE = re.compile(r"Written y-plus", re.I)
+RESIDUAL_HEADER_RE = re.compile(
+    r"continuity\s+x-velocity\s+y-velocity\s+z-velocity",
+    re.I,
+)
+RESIDUAL_ROW_RE = re.compile(
+    r"^\s*(\d+)\s+"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s+"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s+"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s+"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
+    r"(?:\s+([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?))?"
+    r"(?:\s+([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?))?",
+    re.M,
+)
+YPLUS_STAT_RE = re.compile(
+    r"(area-weighted average|minimum|maximum|min|max|average)"
+    r"\s+of\s+y-?plus\s+on\s+(\S+)\s*(?:=|is)\s*"
+    r"([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)",
+    re.I,
+)
 
 
 def _int(text: str) -> int:
     return int(text.replace(",", ""))
+
+
+def _parse_residuals(text: str) -> dict | None:
+    header = RESIDUAL_HEADER_RE.search(text)
+    if not header:
+        return None
+    last = None
+    for match in RESIDUAL_ROW_RE.finditer(text, header.end()):
+        last = match
+    if last is None:
+        return None
+    parsed = {
+        "iteration": int(last.group(1)),
+        "continuity": float(last.group(2)),
+        "xMomentum": float(last.group(3)),
+        "yMomentum": float(last.group(4)),
+        "zMomentum": float(last.group(5)),
+    }
+    if last.group(6):
+        parsed["k"] = float(last.group(6))
+    if last.group(7):
+        parsed["omega"] = float(last.group(7))
+    return parsed
+
+
+def _yplus_group(zone: str) -> str | None:
+    name = zone.lower().strip(".,;")
+    if any(token in name for token in ("fw", "rw", "wing", "flap")):
+        return "wings"
+    if any(token in name for token in ("ut", "floor", "diffuser", "under")):
+        return "floor"
+    return None
+
+
+def _rollup_yplus(zones: dict[str, dict], group: str) -> dict | None:
+    members = [
+        stats for zone, stats in zones.items() if _yplus_group(zone) == group and stats
+    ]
+    if not members:
+        return None
+    rolled: dict[str, float] = {}
+    for stat in ("min", "avg", "max"):
+        values = [item[stat] for item in members if stat in item]
+        if not values:
+            continue
+        if stat == "min":
+            rolled[stat] = min(values)
+        elif stat == "max":
+            rolled[stat] = max(values)
+        else:
+            rolled[stat] = sum(values) / len(values)
+    return rolled or None
+
+
+def _yplus_record(zones: dict[str, dict]) -> dict:
+    return {
+        "zones": zones,
+        "wings": _rollup_yplus(zones, "wings"),
+        "floor": _rollup_yplus(zones, "floor"),
+    }
+
+
+def _parse_yplus(text: str) -> dict | None:
+    zones: dict[str, dict] = {}
+    stat_key = {
+        "area-weighted average": "avg",
+        "average": "avg",
+        "minimum": "min",
+        "min": "min",
+        "maximum": "max",
+        "max": "max",
+    }
+    for match in YPLUS_STAT_RE.finditer(text):
+        key = stat_key[match.group(1).lower()]
+        zone = match.group(2).strip(".,;")
+        zones.setdefault(zone, {})[key] = float(match.group(3))
+    if not zones:
+        return None
+    return _yplus_record(zones)
+
+
+def _merge_yplus(previous: dict | None, incoming: dict) -> dict:
+    if not previous:
+        return incoming
+    zones = dict(previous.get("zones") or {})
+    zones.update(incoming.get("zones") or {})
+    return _yplus_record(zones)
 
 
 def parse_transcript(path: Path) -> dict:
@@ -92,6 +199,21 @@ def parse_transcript(path: Path) -> dict:
     extracted["mrfFan"] = bool(MRF_RE.search(text))
     extracted["memoryFailure"] = bool(MEMORY_RE.search(text))
     extracted["yPlusExported"] = bool(YPLUS_WRITE_RE.search(text))
+    residuals = _parse_residuals(text)
+    if residuals:
+        extracted["residuals"] = residuals
+        hits.append(
+            {
+                "kind": "residuals",
+                "line": (
+                    f"iter {residuals['iteration']} continuity {residuals['continuity']}"
+                ),
+                "file": path.name,
+            }
+        )
+    y_plus = _parse_yplus(text)
+    if y_plus:
+        extracted["yPlus"] = y_plus
     extracted["hits"] = hits[:80]
     return extracted
 
@@ -103,6 +225,14 @@ def parse_transcripts(paths: list[Path]) -> dict:
         merged["hits"].extend(item.get("hits", []))
         for key, value in item.items():
             if key in {"file", "hits"}:
+                continue
+            if key == "residuals" and isinstance(value, dict):
+                previous = merged.get("residuals") or {}
+                if int(value.get("iteration") or 0) >= int(previous.get("iteration") or -1):
+                    merged["residuals"] = value
+                continue
+            if key == "yPlus" and isinstance(value, dict):
+                merged["yPlus"] = _merge_yplus(merged.get("yPlus"), value)
                 continue
             if key not in merged or merged[key] in (None, False):
                 merged[key] = value

@@ -63,6 +63,88 @@ def test_parse_rfile(tmp_path: Path):
     assert abs(out["averaged"] - 1.186406) < 1e-9
 
 
+def test_transcript_residuals_and_yplus(tmp_path: Path):
+    p = tmp_path / "solver.trn"
+    p.write_text(
+        """
+iter continuity x-velocity y-velocity z-velocity k omega time/iter
+  10  1.0e-02  1.0e-03  1.0e-03  1.0e-03  1.0e-03  1.0e-03  0:00:01  1
+  20  4.2e-05  1.1e-05  1.2e-05  1.3e-05  2.0e-05  3.0e-05  0:00:02  1
+area-weighted average of y-plus on surface_fw = 1.8
+maximum of y-plus on surface_fw is 4.4
+area-weighted average of y-plus on surface_ut = 2.4
+""",
+        encoding="utf-8",
+    )
+    out = parse_transcript(p)
+    assert out["residuals"]["iteration"] == 20
+    assert abs(out["residuals"]["continuity"] - 4.2e-05) < 1e-12
+    assert abs(out["residuals"]["omega"] - 3.0e-05) < 1e-12
+    assert abs(out["yPlus"]["wings"]["avg"] - 1.8) < 1e-12
+    assert abs(out["yPlus"]["wings"]["max"] - 4.4) < 1e-12
+    assert abs(out["yPlus"]["floor"]["avg"] - 2.4) < 1e-12
+
+
+def test_build_pack_keeps_case_numbers(tmp_path: Path):
+    from ingest.pack import build_pack
+
+    case = tmp_path / "CASE1"
+    (case / "Baseline002 Post pro" / "X" / "CpT").mkdir(parents=True)
+    (case / "Baseline002 Post pro" / "X" / "CpT" / "AnimationFrame000001.jpg").write_bytes(b"x")
+    (case / "fluent-20260101-000000-.trn").write_text(
+        """
+              Welcome to ANSYS Fluent 2023 R1
+    11315396 cells,     4 cell zones ...
+          56102 polygonal symmetry faces,  zone id: 374
+iter continuity x-velocity y-velocity z-velocity k omega time/iter
+  20  4.2e-05  1.0e-05  1.0e-05  1.0e-05  2.0e-05  3.0e-05  0:00:02  1
+area-weighted average of y-plus on surface_fw = 1.8
+area-weighted average of y-plus on surface_ut = 2.4
+""",
+        encoding="utf-8",
+    )
+    (case / "cx-rfile.out").write_text('"cx-rfile"\n20 1.20 1.21\n', encoding="utf-8")
+    (case / "cz-rfile.out").write_text('"cz-rfile"\n20 3.10 3.11\n', encoding="utf-8")
+    (case / "setup.cas").write_text(
+        '(monitor/report-definitions (((name . "cx") (report-definition drag (force-vector 1. 0. 0.) '
+        '(per-zone? . #f) (type "drag"))) ((name . "cz") (report-definition lift '
+        '(force-vector 0. 0. -1.) (per-zone? . #f) (type "lift"))))',
+        encoding="utf-8",
+    )
+    (case / "geometry.yaml").write_text(
+        """
+vehicle:
+  name: TESTCAR
+  frontalAreaM2: 0.42
+  frontalAreaBasis: half
+  wheelbaseMm: 1530
+  speedMs: 20
+devices:
+  - id: fw-main
+    chordMm: 200
+    profile: TBD
+""",
+        encoding="utf-8",
+    )
+    pack = build_pack(case, tmp_path / "out")
+    assert pack["identity"]["vehicle"] == "TESTCAR"
+    assert pack["identity"]["speedMs"] == 20
+    assert pack["kpis"]["frontalAreaM2"] == 0.42
+    assert pack["kpis"]["Cd"] == 1.20
+    assert abs(pack["kpis"]["Cl"] + 3.10) < 1e-9
+    assert abs(pack["monitors"]["residuals"]["continuity"] - 4.2e-05) < 1e-12
+    assert abs(pack["monitors"]["yPlus"]["wings"]["avg"] - 1.8) < 1e-12
+    assert pack["geometry"]["deviceCount"] == 1
+    assert pack["geometry"]["status"] == "1 karta, 1 z cięciwą, 1 profil TBD"
+    assert pack["kpis"]["references"]["frontalAreaM2"]["source"] == "geometry.yaml"
+    assert pack["kpis"]["references"]["speedMs"]["source"] == "geometry.yaml"
+    assert any("assumed-air" in warning for warning in pack["warnings"])
+    assert "0.42" in pack["notesForAgent"][0]
+    assert "0.5 m²" not in pack["notesForAgent"][0]
+    assert "20" in pack["notesForAgent"][0]
+    assert "vehicle-filled, devices TBD" not in pack["geometry"]["status"]
+
+
 def test_chord_from_two_ends():
     from ingest.cad_measure import _chord_from_points
 

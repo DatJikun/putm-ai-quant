@@ -3,24 +3,34 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from OCP.BRepAdaptor import BRepAdaptor_Curve
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
-from OCP.BRepBndLib import BRepBndLib
-from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
-from OCP.Bnd import Bnd_Box
-from OCP.GCPnts import GCPnts_QuasiUniformDeflection
-from OCP.IFSelect import IFSelect_RetDone
-from OCP.STEPCAFControl import STEPCAFControl_Reader
-from OCP.TCollection import TCollection_ExtendedString
-from OCP.TDF import TDF_Label, TDF_LabelSequence
-from OCP.TDataStd import TDataStd_Name
-from OCP.TDocStd import TDocStd_Document
-from OCP.TopAbs import TopAbs_EDGE
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopLoc import TopLoc_Location
-from OCP.XCAFApp import XCAFApp_Application
-from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ShapeTool
-from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
+try:
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.Bnd import Bnd_Box
+    from OCP.GCPnts import GCPnts_QuasiUniformDeflection
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPCAFControl import STEPCAFControl_Reader
+    from OCP.TCollection import TCollection_ExtendedString
+    from OCP.TDF import TDF_Label, TDF_LabelSequence
+    from OCP.TDataStd import TDataStd_Name
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TopAbs import TopAbs_EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.XCAFApp import XCAFApp_Application
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ShapeTool
+    from OCP.gp import gp_Dir, gp_Pln, gp_Pnt
+
+    HAS_OCP = True
+except ImportError:  # pragma: no cover - środowisko bez OpenCASCADE
+    HAS_OCP = False
+
+
+def _require_ocp() -> None:
+    if not HAS_OCP:
+        raise ImportError("cad_measure wymaga pakietu ocp (OpenCASCADE). Zainstaluj: pip install ocp")
 
 FW_PREFIXES = (
     "PM09-A-FW-Main_Profile",
@@ -61,6 +71,7 @@ def wants_chord(name: str) -> bool:
 
 
 def _label_name(label) -> str:
+    _require_ocp()
     attr = TDataStd_Name()
     if label.FindAttribute(TDataStd_Name.GetID_s(), attr):
         return str(attr.Get().ToExtString())
@@ -68,6 +79,7 @@ def _label_name(label) -> str:
 
 
 def _bbox(shape) -> dict:
+    _require_ocp()
     box = Bnd_Box()
     BRepBndLib.Add_s(shape, box)
     xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
@@ -85,6 +97,7 @@ def _bbox(shape) -> dict:
 
 
 def _walk_shapes(shape_tool, label, loc: TopLoc_Location, out: list) -> None:
+    _require_ocp()
     name = _label_name(label)
     if XCAFDoc_ShapeTool.IsAssembly_s(label):
         comps = TDF_LabelSequence()
@@ -108,6 +121,7 @@ def _walk_shapes(shape_tool, label, loc: TopLoc_Location, out: list) -> None:
 
 
 def load_named_solids(step_path: Path) -> list[dict]:
+    _require_ocp()
     app = XCAFApp_Application.GetApplication_s()
     doc = TDocStd_Document(TCollection_ExtendedString("MDTV-XCAF"))
     app.NewDocument(TCollection_ExtendedString("MDTV-XCAF"), doc)
@@ -127,6 +141,7 @@ def load_named_solids(step_path: Path) -> list[dict]:
 
 
 def _section_points(shape, y: float) -> list[tuple[float, float]]:
+    _require_ocp()
     plane = gp_Pln(gp_Pnt(0.0, y, 0.0), gp_Dir(0.0, 1.0, 0.0))
     sec = BRepAlgoAPI_Section(shape, plane, True)
     pts: list[tuple[float, float]] = []
