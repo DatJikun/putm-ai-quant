@@ -18,6 +18,7 @@ try:
     from OCP.TDocStd import TDocStd_Document
     from OCP.TopAbs import TopAbs_EDGE
     from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
     from OCP.TopLoc import TopLoc_Location
     from OCP.XCAFApp import XCAFApp_Application
     from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ShapeTool
@@ -140,25 +141,46 @@ def load_named_solids(step_path: Path) -> list[dict]:
     return solids
 
 
-def _section_points(shape, y: float) -> list[tuple[float, float]]:
+def _simplify_loop(pts: list[tuple[float, float]], limit: int = 36) -> list[list[float]]:
+    if len(pts) <= limit:
+        return [[round(x, 2), round(z, 2)] for x, z in pts]
+    step = max(1, (len(pts) - 1) // (limit - 1))
+    picked = list(pts[::step])
+    if picked[-1] != pts[-1]:
+        picked.append(pts[-1])
+    return [[round(x, 2), round(z, 2)] for x, z in picked[:limit]]
+
+
+def _section_loops(shape, y: float) -> list[list[tuple[float, float]]]:
     _require_ocp()
     plane = gp_Pln(gp_Pnt(0.0, y, 0.0), gp_Dir(0.0, 1.0, 0.0))
     sec = BRepAlgoAPI_Section(shape, plane, True)
+    loops: list[list[tuple[float, float]]] = []
+    if not sec.IsDone():
+        return loops
+    exp = TopExp_Explorer(sec.Shape(), TopAbs_EDGE)
+    while exp.More():
+        edge = exp.Current()
+        loop: list[tuple[float, float]] = []
+        try:
+            curve = BRepAdaptor_Curve(TopoDS.Edge_s(edge))
+            discret = GCPnts_QuasiUniformDeflection(curve, 0.8)
+            if discret.IsDone():
+                for i in range(1, discret.NbPoints() + 1):
+                    p = discret.Value(i)
+                    loop.append((p.X(), p.Z()))
+        except Exception:
+            loop = []
+        if len(loop) >= 2:
+            loops.append(loop)
+        exp.Next()
+    return loops
+
+
+def _section_points(shape, y: float) -> list[tuple[float, float]]:
     pts: list[tuple[float, float]] = []
-    if sec.IsDone():
-        exp = TopExp_Explorer(sec.Shape(), TopAbs_EDGE)
-        while exp.More():
-            edge = exp.Current()
-            try:
-                curve = BRepAdaptor_Curve(edge)
-                discret = GCPnts_QuasiUniformDeflection(curve, 0.8)
-                if discret.IsDone():
-                    for i in range(1, discret.NbPoints() + 1):
-                        p = discret.Value(i)
-                        pts.append((p.X(), p.Z()))
-            except Exception:
-                pass
-            exp.Next()
+    for loop in _section_loops(shape, y):
+        pts.extend(loop)
     return pts
 
 
@@ -167,7 +189,10 @@ def _chord_from_points(pts: list[tuple[float, float]]) -> dict | None:
         return None
     if len(pts) > 400:
         step = max(1, len(pts) // 400)
-        pts = pts[::step]
+        reduced = pts[::step]
+        reduced.append(min(pts, key=lambda p: p[0]))
+        reduced.append(max(pts, key=lambda p: p[0]))
+        pts = reduced
     best = 0.0
     le = te = pts[0]
     for i, a in enumerate(pts):
@@ -199,10 +224,12 @@ def measure_solid(item: dict, do_chord: bool = True) -> dict:
         y_cut = bb["ymin"] + 0.5 * bb["dy"]
     half_span = round(abs(min(bb["ymin"], 0.0)), 2)
     pts: list = []
+    loops: list = []
     chord = None
     section_method = None
     if do_chord:
-        pts = _section_points(item["shape"], y_cut)
+        loops = _section_loops(item["shape"], y_cut)
+        pts = [point for loop in loops for point in loop]
         section_method = "brep" if len(pts) >= 4 else "empty"
         chord = _chord_from_points(pts) if section_method == "brep" else None
     rec = {
@@ -214,6 +241,7 @@ def measure_solid(item: dict, do_chord: bool = True) -> dict:
         "sectionPointCount": len(pts),
         "sectionMethod": section_method,
         "chord": chord,
+        "sectionLoops": [_simplify_loop(loop) for loop in loops],
     }
     if do_chord and section_method == "empty":
         rec["geometryCutError"] = (

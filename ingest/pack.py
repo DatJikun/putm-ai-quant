@@ -5,13 +5,17 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ingest.car_layout import stamp_frames
 from ingest.cas_setup import parse_cas_setup
 from ingest.inventory import scan_folder
 from ingest.pictures import index_pictures
 from ingest.rfile import parse_rfiles
+from ingest.setup_trace import merge_traces
 from ingest.slices import load_slices
+from ingest.step_cards import cards_from_step
 from ingest.transcript import parse_transcripts
 from ingest.wall_forces import group_for, load_component_forces
+from ingest.wft_mesh import ground_layer_warnings, parse_wft
 
 SCHEMA = "aeropack/v1"
 TEMPLATE_GEOMETRY = Path(__file__).resolve().parent.parent / "templates" / "geometry.yaml"
@@ -48,7 +52,10 @@ def _geometry_summary(doc: dict, source: str) -> dict:
     devices = doc.get("devices") if isinstance(doc.get("devices"), list) else []
     cards = [item for item in devices if isinstance(item, dict)]
     with_chord = sum(1 for item in cards if _num(item.get("chordMm")) is not None)
-    profiles_tbd = sum(1 for item in cards if item.get("profile") in (None, "TBD"))
+    profiles_tbd = sum(
+        1 for item in cards
+        if "profile" in item and item.get("profile") in (None, "TBD")
+    )
     if not cards:
         status = "brak kart urządzeń"
     else:
@@ -160,21 +167,52 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
     files = inventory["files"]
     transcripts = parse_transcripts(_abs(case_root, files["transcripts"])) if files["transcripts"] else {}
     reports = parse_rfiles(_abs(case_root, files["reports"])) if files["reports"] else {}
-    setup = parse_cas_setup(_abs(case_root, files["cas"]))
+    cas_paths = []
+    skipped_cas: list[str] = []
+    for cas_path in _abs(case_root, files["cas"]):
+        if cas_path.exists() and cas_path.stat().st_size > 200_000_000:
+            skipped_cas.append(cas_path.name)
+            continue
+        cas_paths.append(cas_path)
+    setup = parse_cas_setup(cas_paths)
     slices = load_slices()
-    images = index_pictures(case_root, files["pictures"], slices) if files["pictures"] else {
+    case_geom = _abs(case_root, files["geometryYaml"])
+    geom_path = case_geom[0] if case_geom else (
+        TEMPLATE_GEOMETRY if TEMPLATE_GEOMETRY.exists() else None
+    )
+    geometry_doc = _load_yaml(geom_path)
+    step_paths = [
+        case_root / rel for rel in files["cad"]
+        if rel.lower().endswith((".step", ".stp"))
+    ]
+    step_cards = None
+    step_error = None
+    if step_paths:
+        try:
+            step_cards = cards_from_step(step_paths[0])
+        except ImportError:
+            step_error = "Jest STEP, ale brak pakietu ocp — stacje X zostają z geometry.yaml."
+    if step_cards:
+        vehicle_block = geometry_doc.get("vehicle") if isinstance(geometry_doc.get("vehicle"), dict) else {}
+        geometry_doc = {
+            "vehicle": vehicle_block,
+            "devices": step_cards,
+            "measuredFrom": step_paths[0].name,
+        }
+    wft_paths = sorted(case_root.rglob("*.wft"))
+    wft_parsed = parse_wft(wft_paths[0]) if wft_paths else None
+    trace = merge_traces(_abs(case_root, files["transcripts"])) if files["transcripts"] else None
+    images = index_pictures(
+        case_root, files["pictures"], slices, geometry_doc
+    ) if files["pictures"] else {
         "total": 0,
         "index": [],
         "heroCount": 0,
         "byAxis": {},
         "stationEncoded": False,
     }
-
-    case_geom = _abs(case_root, files["geometryYaml"])
-    geom_path = case_geom[0] if case_geom else (
-        TEMPLATE_GEOMETRY if TEMPLATE_GEOMETRY.exists() else None
-    )
-    geometry_doc = _load_yaml(geom_path)
+    if step_cards and images.get("index"):
+        stamp_frames(images["index"], step_cards)
     vehicle = geometry_doc.get("vehicle") if isinstance(geometry_doc.get("vehicle"), dict) else {}
     vehicle_name = vehicle.get("name") if isinstance(vehicle.get("name"), str) and vehicle.get("name") else None
     aref = _num(vehicle.get("frontalAreaM2"))
@@ -252,6 +290,29 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
 
     warnings = list(inventory["warnings"])
     warnings.extend(kpi_warnings)
+    if skipped_cas:
+        warnings.append(
+            "Pominięto duży .cas przy czytaniu wektorów sił: " + ", ".join(skipped_cas) + "."
+        )
+    if step_error:
+        warnings.append(step_error)
+    if step_cards:
+        warnings.append(
+            "Stacje klatek X są z STEP tego case'a. Szablon geometry.yaml nie ustawia pozycji skrzydeł."
+        )
+    elif geom_path == TEMPLATE_GEOMETRY:
+        warnings.append(
+            "Brak STEP w folderze case — pozycje skrzydeł biorą się z templates/geometry.yaml "
+            "i mogą nie pasować do tej geometrii."
+        )
+    if wft_parsed:
+        warnings.extend(ground_layer_warnings(wft_parsed))
+    if not files["journals"]:
+        warnings = [item for item in warnings if not item.startswith("Brak journala")]
+        warnings.append(
+            "Brak .jou. Nie składam journala z transcriptu — to nie odtworzy sesji 1:1. "
+            "Kliknięcia są w methods.setupTrace. Siatkę powtarza .wft, solver jest w .cas.h5."
+        )
     if images.get("warning"):
         warnings.append(images["warning"])
     if transcripts.get("memoryFailure"):
@@ -321,6 +382,7 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
             "fluentVersion": transcripts.get("fluentVersion"),
             "turbulence": transcripts.get("turbulenceHit"),
             "mrfFan": transcripts.get("mrfFan"),
+            "setupTrace": trace,
         },
         "mesh": {
             "cells": transcripts.get("cells"),
@@ -330,13 +392,14 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
             "prismStairstepLocations": transcripts.get("prismStairstepLocations"),
             "symmetryFaces": transcripts.get("symmetryFaces"),
             "inletFaces": transcripts.get("inletFaces"),
+            "boundaryLayers": None if wft_parsed is None else wft_parsed,
         },
         "reportDefinitions": setup.get("reports") or {},
         "monitors": reports,
         "kpis": kpis,
         "geometry": _geometry_summary(
             geometry_doc,
-            str(geom_path) if geom_path else "brak",
+            geometry_doc.get("measuredFrom") or (str(geom_path) if geom_path else "brak"),
         ),
         "slices": {
             **(images.get("slices") or {}),
@@ -385,10 +448,19 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
     (images_dir / "index.json").write_text(
         json.dumps(heroes_only_index, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    if geom_path is not None and geom_path.exists():
-        dest_geom = out_dir / "geometry.yaml"
-        if geom_path.resolve() != dest_geom.resolve():
-            shutil.copy(geom_path, dest_geom)
+    dest_geom = out_dir / "geometry.yaml"
+    if step_cards:
+        try:
+            import yaml
+        except ImportError:
+            yaml = None
+        if yaml is not None:
+            dest_geom.write_text(
+                yaml.safe_dump(geometry_doc, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+    elif geom_path is not None and geom_path.exists() and geom_path.resolve() != dest_geom.resolve():
+        shutil.copy(geom_path, dest_geom)
     slices_src = Path(__file__).resolve().parent.parent / "templates" / "slices.yaml"
     if slices_src.exists():
         shutil.copy(slices_src, out_dir / "slices.yaml")

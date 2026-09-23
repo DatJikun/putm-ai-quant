@@ -8,6 +8,9 @@ from ingest.cas_setup import parse_cas_setup
 from ingest.fluent_dump import pick_cas_h5, run_fluent_dump, write_force_journal, find_fluent
 from ingest.inventory import write_inventory
 from ingest.pack import build_pack
+from ingest.field_grid import write_grid
+from ingest.surface_field import write_profiles, write_surfaces
+from ingest.screen_quant import write_quant
 
 
 def main() -> None:
@@ -35,6 +38,27 @@ def main() -> None:
         action="store_true",
         help="Tylko zapisz dump_wall_forces.jou, nie odpalaj Fluenta",
     )
+
+    screens = sub.add_parser("screens", help="Kolory klatek postpro na liczby")
+    screens.add_argument("root", type=Path)
+    screens.add_argument("--out", type=Path)
+
+    grid = sub.add_parser("grid", help="Rzadka siatka parametru z pola wyników")
+    grid.add_argument("root", type=Path)
+    grid.add_argument("--axis", default="x")
+    grid.add_argument("--station", type=float, required=True)
+    grid.add_argument("--quantity", default="cp")
+    grid.add_argument("--pitch", type=float, default=0.025)
+    grid.add_argument("--out", type=Path)
+
+    surf = sub.add_parser("surfaces", help="Mapa 3D Cp, y+ i tarcia na FW, UT i RW")
+    surf.add_argument("root", type=Path)
+    surf.add_argument("--pitch", type=float, default=0.01)
+    surf.add_argument("--out", type=Path)
+
+    prof = sub.add_parser("profiles", help="Cp wzdłuż cięciwy na FW, RW i podłodze")
+    prof.add_argument("root", type=Path)
+    prof.add_argument("--out", type=Path)
 
     args = parser.parse_args()
     if args.cmd == "inventory":
@@ -72,6 +96,36 @@ def main() -> None:
                 result["pack"] = str(out / "aeropack.json")
                 result["componentAxes"] = list((pack.get("kpis") or {}).get("components") or {})
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.cmd == "screens":
+        out = args.out or Path("quant") / args.root.name / "ekrany.json"
+        data = write_quant(args.root, out)
+        print(json.dumps({"out": str(out), "images": data["images"], "skipped": data["skipped"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "grid":
+        out = args.out or Path("quant") / args.root.name / f"grid-{args.axis}-{args.station}-{args.quantity}.json"
+        data = write_grid(
+            args.root,
+            out,
+            axis=args.axis,
+            station=args.station,
+            quantity=args.quantity,
+            pitch=args.pitch,
+        )
+        print(json.dumps({"out": str(out), "cells": data["cells"], "ny": data["ny"], "nz": data["nz"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "surfaces":
+        out = args.out or Path("quant") / args.root.name / "powierzchnie.json"
+        data = write_surfaces(args.root, out, pitch=args.pitch)
+        summary = [
+            {"id": item["id"], "punktow": item["punktow"], "scianek": item["scianek"]}
+            for item in data["powierzchnie"]
+        ]
+        print(json.dumps({"out": str(out), "powierzchnie": summary}, ensure_ascii=False, indent=2))
+    elif args.cmd == "profiles":
+        out = args.out or Path("quant") / args.root.name / "profile.json"
+        data = write_profiles(args.root, out)
+        brief = []
+        for wing in data["skrzydla"]:
+            brief.append({"id": wing["id"], "przekroje": len(wing["przekroje"])})
+        print(json.dumps({"out": str(out), "skrzydla": brief}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

@@ -3,7 +3,18 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 from ingest.slices import load_slices, station_m
+
+GEOMETRY = Path(__file__).resolve().parent.parent / "templates" / "geometry.yaml"
+WAKE_OFFSET_MM = 50.0
+COMPONENTS = (
+    ("FW", "front-wing"),
+    ("RW", "rear-wing"),
+    ("Floor", "floor"),
+)
+FEATURES = ("leading_edge", "mid_chord", "trailing_edge_wake")
 
 FIELD_FROM_FOLDER = {
     "cp": "cp",
@@ -20,10 +31,56 @@ FIELD_FROM_FOLDER = {
 FRAME_RE = re.compile(r"AnimationFrame(\d+)", re.I)
 SURFACE_RE = re.compile(r"^(CpX|CpZ|Cp|WSS|y_plus)_(\d+)$", re.I)
 
-# Stacje, które warto pokazać agentowi na starcie (metry, oś X).
-HERO_X_M = (-0.5, 0.0, 0.7, 1.2, 1.6, 2.0, 2.4)
-HERO_Y_M = (-0.01, -0.4)
-HERO_Z_M = (0.05, 0.25, 0.55)
+def _xs_mm(device: dict) -> list[float]:
+    xs: list[float] = []
+    for key in ("le", "te"):
+        point = device.get(key) or {}
+        raw = point.get("xMm")
+        if isinstance(raw, (int, float)):
+            xs.append(float(raw))
+    return xs
+
+
+def component_stations(geometry: dict, wake_mm: float = WAKE_OFFSET_MM) -> list[dict]:
+    """X_LE = Xmin, X_MID = środek obwiedni, ślad = Xmax + wake_mm. Jednostka wyjścia: m."""
+    by_group: dict[str, list[float]] = {}
+    for device in geometry.get("devices") or []:
+        group = device.get("group")
+        if not group:
+            continue
+        by_group.setdefault(group, []).extend(_xs_mm(device))
+
+    stations = []
+    for component, group in COMPONENTS:
+        xs = by_group.get(group) or []
+        if len(xs) < 2:
+            continue
+        x_min = min(xs)
+        x_max = max(xs)
+        targets = {
+            "leading_edge": x_min,
+            "mid_chord": 0.5 * (x_min + x_max),
+            "trailing_edge_wake": x_max + wake_mm,
+        }
+        stations.append(
+            {
+                "component": component,
+                "xMinM": round(x_min / 1000.0, 4),
+                "xMaxM": round(x_max / 1000.0, 4),
+                "targets": [
+                    {"feature": feature, "xM": round(targets[feature] / 1000.0, 4)}
+                    for feature in FEATURES
+                ],
+            }
+        )
+    return stations
+
+
+def load_geometry(path: Path | None = None) -> dict:
+    src = path or GEOMETRY
+    if not src.exists():
+        return {}
+    return yaml.safe_load(src.read_text(encoding="utf-8")) or {}
 
 
 def _field_from_folder(name: str) -> str:
@@ -34,8 +91,10 @@ def index_pictures(
     root: Path,
     picture_rels: list[str],
     slices: dict | None = None,
+    geometry: dict | None = None,
 ) -> dict:
     slices = slices if slices is not None else load_slices()
+    geometry = geometry if geometry is not None else load_geometry()
     entries = []
     max_frame = {"x": 1, "y": 1, "z": 1}
 
@@ -81,7 +140,8 @@ def index_pictures(
                 item["axis"], item["frame"], max_frame[item["axis"]], slices
             )
 
-    mark_heroes(entries)
+    stations = component_stations(geometry)
+    mark_heroes(entries, stations)
     by_axis = {"full": 0, "x": 0, "y": 0, "z": 0}
     for item in entries:
         by_axis[item["axis"]] = by_axis.get(item["axis"], 0) + 1
@@ -94,6 +154,7 @@ def index_pictures(
         },
         "byAxis": by_axis,
         "heroCount": sum(1 for e in entries if e["hero"]),
+        "componentStations": stations,
         "index": entries,
         "warning": None if encoded else (
             "JPG z CFD-Post: folder = oś/pole, nazwa = AnimationFrameNNNN. "
@@ -109,7 +170,12 @@ def _closest(pool: list[dict], target: float) -> dict | None:
     return min(with_st, key=lambda e: abs(e["stationM"] - target))
 
 
-def mark_heroes(entries: list[dict]) -> None:
+# Y/Z nie wynikają z obwiedni X komponentu. Symetria i wysokość podłogi zostają.
+HERO_Y_M = (-0.01, -0.4)
+HERO_Z_M = (0.05, 0.25, 0.55)
+
+
+def mark_heroes(entries: list[dict], stations: list[dict] | None = None) -> None:
     by_key: dict[tuple[str, str, str], list[dict]] = {}
     for item in entries:
         key = (item["axis"], item["field"], item["camera"])
@@ -123,18 +189,39 @@ def mark_heroes(entries: list[dict]) -> None:
                 indexed[frame]["hero"] = True
                 indexed[frame]["reason"] = reason
 
-    def pick_station(axis: str, field: str, camera: str, stations: tuple, reason: str) -> None:
+    def pick_station(axis: str, field: str, camera: str, targets: tuple, reason: str) -> None:
         pool = by_key.get((axis, field, camera), [])
-        for target in stations:
-            img = _closest(pool, target)
-            if img and not img["hero"]:
+        for target in targets:
+            img = _closest(
+                [e for e in pool if not e.get("hero")],
+                target,
+            )
+            if img:
                 img["hero"] = True
                 img["reason"] = f"{reason} (stacja {img['stationM']} m)."
 
+    def pick_feature(component: str, feature: str, target: float) -> None:
+        pool = [
+            e
+            for e in by_key.get(("x", "cpt", "slice"), [])
+            if e.get("stationM") is not None and not e.get("feature")
+        ]
+        img = _closest(pool, target)
+        if not img:
+            return
+        img["hero"] = True
+        img["component"] = component
+        img["feature"] = feature
+        img["targetM"] = target
+        img["reason"] = (
+            f"{component} {feature} (stacja {img['stationM']} m, cel {target} m)."
+        )
+
     pick_surface("yplus", "y_plus", [1], "y+ na powierzchni.")
     pick_surface("cp", "Cp", [1, 12], "Mapa Cp na karoserii.")
-    pick_station("x", "cpt", "slice", HERO_X_M, "Przekrój X, Cp total")
-    pick_station("x", "vel", "slice", (0.7, 2.0), "Przekrój X, |V|")
+    for station in stations or []:
+        for target in station["targets"]:
+            pick_feature(station["component"], target["feature"], target["xM"])
     pick_station("y", "cpt", "slice", HERO_Y_M, "Przekrój Y, Cp total")
     pick_station("y", "vel", "slice", (-0.01,), "Przekrój Y, |V|")
     pick_station("z", "cpt", "slice", HERO_Z_M, "Przekrój Z, Cp total")

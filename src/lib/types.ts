@@ -44,6 +44,8 @@ export type PostImage = {
   zoom: "full" | "detail"
   region: RegionId
   hero: boolean
+  component?: string
+  feature?: string
   reason?: string
 }
 

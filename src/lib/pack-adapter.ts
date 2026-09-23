@@ -396,6 +396,8 @@ export function adaptAeropack(
       zoom: "full",
       region,
       hero,
+      component: typeof img.component === "string" ? img.component : undefined,
+      feature: typeof img.feature === "string" ? img.feature : undefined,
       reason: img.reason || (hero ? "Hero klatka stacji kluczowej" : undefined),
     }
   })
