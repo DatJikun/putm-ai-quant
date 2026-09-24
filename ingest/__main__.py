@@ -4,7 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
+from ingest.ask import answer
 from ingest.cas_setup import parse_cas_setup
+from ingest.diff_pack import write_diff
 from ingest.fluent_dump import pick_cas_h5, run_fluent_dump, write_force_journal, find_fluent
 from ingest.inventory import write_inventory
 from ingest.pack import build_pack
@@ -60,6 +62,29 @@ def main() -> None:
     prof.add_argument("root", type=Path)
     prof.add_argument("--out", type=Path)
 
+    wake = sub.add_parser("wake", help="Dziura Cp i obrót prędkości na płaszczyźnie za skrzydłem")
+    wake.add_argument("root", type=Path)
+    wake.add_argument("--station", type=float, required=True)
+    wake.add_argument("--y-min", type=float, required=True)
+    wake.add_argument("--y-max", type=float, required=True)
+    wake.add_argument("--z-min", type=float, required=True)
+    wake.add_argument("--z-max", type=float, required=True)
+    wake.add_argument("--name", default="slad")
+    wake.add_argument("--out", type=Path)
+
+    diff = sub.add_parser("diff", help="Różnice dwóch paczek aeropack.json")
+    diff.add_argument("baseline", type=Path)
+    diff.add_argument("candidate", type=Path)
+    diff.add_argument("--out", type=Path)
+
+    ask = sub.add_parser("ask", help="Jedno pytanie do paczki: forces, part, slice")
+    ask.add_argument("pack", type=Path)
+    ask.add_argument("tool")
+    ask.add_argument("--part")
+    ask.add_argument("--axis", default="x")
+    ask.add_argument("--station", type=float, default=0.0)
+    ask.add_argument("--field")
+
     args = parser.parse_args()
     if args.cmd == "inventory":
         args.out.mkdir(parents=True, exist_ok=True)
@@ -111,6 +136,28 @@ def main() -> None:
             pitch=args.pitch,
         )
         print(json.dumps({"out": str(out), "cells": data["cells"], "ny": data["ny"], "nz": data["nz"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "wake":
+        out = args.out or Path("quant") / args.root.name / f"slad-{args.name}.json"
+        data = write_grid(
+            args.root,
+            out,
+            axis="x",
+            station=args.station,
+            quantity="wake",
+            search_box=(args.y_min, args.y_max, args.z_min, args.z_max),
+        )
+        print(json.dumps({"out": str(out), "wir": data.get("wir"), "cells": data.get("cells")}, ensure_ascii=False, indent=2))
+    elif args.cmd == "diff":
+        out = args.out or Path("quant") / "diff.json"
+        data = write_diff(args.baseline, args.candidate, out)
+        print(json.dumps({"out": str(out), "delta_cd": data["delta_cd"], "delta_cl": data["delta_cl"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "ask":
+        payload = answer(
+            args.pack,
+            args.tool,
+            {"part": args.part, "axis": args.axis, "station": args.station, "field": args.field},
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     elif args.cmd == "surfaces":
         out = args.out or Path("quant") / args.root.name / "powierzchnie.json"
         data = write_surfaces(args.root, out, pitch=args.pitch)

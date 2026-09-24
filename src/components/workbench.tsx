@@ -131,6 +131,7 @@ export function Workbench() {
   const [page, setPage] = useState(0)
   const [copied, setCopied] = useState(false)
   const [selectedHeroId, setSelectedHeroId] = useState<string>("")
+  const [askText, setAskText] = useState<string>("")
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -810,7 +811,26 @@ export function Workbench() {
             <span className="text-sm text-muted-foreground">
               silnik reguł aero FS — twarda ocena numeryczna i geometryczna
             </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                if (selectedPackId === "demo-fs26" || selectedPackId === "custom") {
+                  setAskText("Siły z dysku są dostępne dla paczki wczytanej z folderu packs.")
+                  return
+                }
+                const res = await fetch(`/api/ask?id=${encodeURIComponent(selectedPackId)}&tool=forces`)
+                const data = await res.json()
+                setAskText(JSON.stringify(data, null, 2))
+              }}
+            >
+              Daj siły tej paczki
+            </Button>
           </div>
+          {askText ? (
+            <pre className="max-h-48 overflow-auto rounded-md border bg-muted/40 p-3 text-xs">{askText}</pre>
+          ) : null}
           <p className="max-w-3xl text-sm leading-relaxed">{review.summary}</p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <ScoreBar label="zbieżność" value={review.scores.zbieznosc} />

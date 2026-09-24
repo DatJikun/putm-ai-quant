@@ -40,6 +40,45 @@ def bin_means(y: np.ndarray, z: np.ndarray, values: np.ndarray, pitch: float) ->
     }
 
 
+def vortex_from_samples(y, z, cp, vy, vz, box: tuple[float, float, float, float] | None = None) -> dict:
+    """Low-Cp hole and whether in-plane velocity rotates around it."""
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+    cp = np.asarray(cp, dtype=float)
+    vy = np.asarray(vy, dtype=float)
+    vz = np.asarray(vz, dtype=float)
+    mask = np.isfinite(cp) & np.isfinite(y) & np.isfinite(z)
+    if box is not None:
+        y0, y1, z0, z1 = box
+        mask &= (y >= y0) & (y <= y1) & (z >= z0) & (z <= z1)
+    if int(mask.sum()) < 5:
+        return {"znaleziony": False}
+    picked = np.where(mask, cp, np.inf)
+    i = int(np.argmin(picked))
+    cy, cz = float(y[i]), float(z[i])
+    dy = y - cy
+    dz = z - cz
+    radius = np.hypot(dy, dz)
+    ring = mask & (radius > 0.015) & (radius < 0.08) & np.isfinite(vy) & np.isfinite(vz)
+    spin = None
+    if int(ring.sum()) >= 8:
+        tang = (-dz[ring] * vy[ring] + dy[ring] * vz[ring]) / radius[ring]
+        spin = float(np.mean(tang))
+    return {
+        "znaleziony": True,
+        "y_m": round(cy, 3),
+        "z_m": round(cz, 3),
+        "cp": round(float(cp[i]), 3),
+        "predkosc_styczna_m_s": None if spin is None else round(spin, 3),
+        "kreci_sie": bool(spin is not None and abs(spin) >= 0.4),
+        "opis": (
+            "Dziura najniższego Cp w zadanym oknie, nie na brzegu tunelu. "
+            "Prędkość styczna to obrót powietrza wokół tej dziury. "
+            "Dodatnia kręci się zgodnie z regułą prawej dłoni wzdłuż +X."
+        ),
+    }
+
+
 def slice_grid(
     case: Path,
     *,
@@ -48,6 +87,7 @@ def slice_grid(
     quantity: str = "cp",
     pitch: float = 0.025,
     half_thickness: float = 0.012,
+    search_box: tuple[float, float, float, float] | None = None,
 ) -> dict:
     import h5py
 
@@ -140,20 +180,24 @@ def slice_grid(
         def col(name: str) -> np.ndarray:
             return data[f"{base}/{name}/1"][uniq]
 
-        if quantity == "cp":
-            values = col("SV_P") / Q
-        elif quantity == "p":
-            values = col("SV_P")
-        elif quantity == "u":
-            values = col("SV_U")
-        elif quantity == "v":
-            values = col("SV_V")
-        elif quantity == "w":
-            values = col("SV_W")
-        elif quantity == "speed":
-            values = np.hypot(np.hypot(col("SV_U"), col("SV_V")), col("SV_W"))
-        else:
-            raise ValueError("parametr: cp, p, u, v, w, speed")
+        pressure = col("SV_P")
+        vel_u = col("SV_U")
+        vel_v = col("SV_V")
+        vel_w = col("SV_W")
+        fields = {
+            "cp": pressure / Q,
+            "p": pressure,
+            "u": vel_u,
+            "v": vel_v,
+            "w": vel_w,
+            "speed": np.hypot(np.hypot(vel_u, vel_v), vel_w),
+        }
+        if quantity not in fields and quantity != "wake":
+            raise ValueError("parametr: cp, p, u, v, w, speed, wake")
+        values = fields["cp"] if quantity == "wake" else fields[quantity]
+        wake = None
+        if quantity == "wake":
+            wake = vortex_from_samples(y_mean, z_mean, fields["cp"], vel_v, vel_w, box=search_box)
 
     grid = bin_means(y_mean, z_mean, values.astype(np.float64), pitch)
     across = [n for n in "xyz" if n != axis]
@@ -165,6 +209,7 @@ def slice_grid(
             "halfThicknessM": half_thickness,
             "cells": int(uniq.size),
             "across": across,
+            "wir": wake,
             "note": (
                 "Średnia z komórek, które dotykają tej płaszczyzny. "
                 "Kierunki w siatce to dwie osie prostopadłe do cięcia, w metrach. "

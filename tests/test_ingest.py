@@ -406,6 +406,71 @@ def test_ground_layer_without_first_height(tmp_path: Path):
     assert "FirstHeight" in text
 
 
+def test_diff_reports_shared_component_only():
+    from ingest.diff_pack import diff_packs
+
+    base = {
+        "identity": {"caseId": "baza"},
+        "kpis": {
+            "Cd": 1.2,
+            "Cl": -3.0,
+            "LOverD": 2.5,
+            "cm": -0.4,
+            "cz": 3.0,
+            "references": {"referenceLengthM": {"value": 1.53}},
+            "components": {"groups": {"fw": {"Cd": 0.2, "downforceCoeff": 1.0}, "rw": {"Cd": 0.4, "downforceCoeff": 1.2}}},
+        },
+    }
+    new = {
+        "identity": {"caseId": "nowa"},
+        "kpis": {
+            "Cd": 1.3,
+            "Cl": -3.4,
+            "LOverD": 2.6,
+            "cm": -0.5,
+            "cz": 3.4,
+            "references": {"referenceLengthM": {"value": 1.53}},
+            "components": {"groups": {"fw": {"Cd": 0.25, "downforceCoeff": 1.12}}},
+        },
+    }
+    out = diff_packs(base, new)
+    assert out["delta_cd"] == 0.1
+    assert out["delta_cl"] == -0.4
+    assert [item["nazwa"] for item in out["komponenty"]] == ["fw"]
+    assert out["komponenty"][0]["delta_docisk"] == 0.12
+    assert out["przesuniecie_srodka_parcia_m"] is not None
+
+
+def test_vortex_core_follows_rotating_low_pressure():
+    import numpy as np
+
+    from ingest.field_grid import vortex_from_samples
+
+    y = [0.0, 0.04, 0.0, -0.04, 0.0]
+    z = [0.0, 0.0, 0.04, 0.0, -0.04]
+    cp = [-2.0, -0.4, -0.4, -0.4, -0.4]
+    # extra ring points so the count clears the threshold
+    for ang in range(8):
+        radius = 0.04
+        yy = radius * np.cos(ang)
+        zz = radius * np.sin(ang)
+        y.append(float(yy))
+        z.append(float(zz))
+        cp.append(-0.5)
+    y = np.array(y)
+    z = np.array(z)
+    cp = np.array(cp)
+    radius = np.hypot(y, z)
+    safe = np.where(radius == 0, 1.0, radius)
+    vy = -z / safe
+    vz = y / safe
+    core = vortex_from_samples(y, z, cp, vy, vz, box=(-0.2, 0.2, -0.2, 0.2))
+    assert core["znaleziony"] is True
+    assert core["y_m"] == 0.0
+    assert core["cp"] == -2.0
+    assert core["kreci_sie"] is True
+
+
 def test_chord_curve_marks_reversed_shear():
     import numpy as np
 
