@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from ingest.ask import answer
+from ingest.chatbot_brief import write_brief
 from ingest.cas_setup import parse_cas_setup
 from ingest.diff_pack import write_diff
 from ingest.fluent_dump import pick_cas_h5, run_fluent_dump, write_force_journal, find_fluent
@@ -76,6 +77,9 @@ def main() -> None:
     diff.add_argument("baseline", type=Path)
     diff.add_argument("candidate", type=Path)
     diff.add_argument("--out", type=Path)
+
+    brief = sub.add_parser("brief", help="Markdown dla chatbota z gotowego aeropack.json")
+    brief.add_argument("pack_dir", type=Path)
 
     ask = sub.add_parser("ask", help="Jedno pytanie do paczki: forces, part, slice")
     ask.add_argument("pack", type=Path)
@@ -151,6 +155,10 @@ def main() -> None:
         out = args.out or Path("quant") / "diff.json"
         data = write_diff(args.baseline, args.candidate, out)
         print(json.dumps({"out": str(out), "delta_cd": data["delta_cd"], "delta_cl": data["delta_cl"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "brief":
+        pack = json.loads((args.pack_dir / "aeropack.json").read_text(encoding="utf-8"))
+        dest = write_brief(pack, args.pack_dir)
+        print(json.dumps({"out": str(dest)}, ensure_ascii=False, indent=2))
     elif args.cmd == "ask":
         payload = answer(
             args.pack,

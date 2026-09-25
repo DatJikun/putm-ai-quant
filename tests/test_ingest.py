@@ -827,3 +827,171 @@ def test_pack_flags_unsettled_forces_and_early_stop(tmp_path: Path):
     assert any(w.startswith("Liczenie zatrzymane przed planem") for w in pack["warnings"])
     assert pack["methods"]["turbulence"] is None or isinstance(pack["methods"]["turbulence"], str)
 
+
+def _sparse_pack() -> dict:
+    return {
+        "identity": {
+            "caseId": "PUSTY",
+            "vehicle": None,
+            "halfModel": None,
+            "yawDeg": None,
+            "speedMs": None,
+        },
+        "kpis": {
+            "Cd": None,
+            "Cl": None,
+            "downforceCoeff": None,
+            "LOverD": None,
+            "cm": None,
+            "cz": None,
+            "references": {
+                "speedMs": {"value": None, "source": None},
+                "rho": {"value": None, "source": None},
+                "mu": {"value": None, "source": None},
+                "frontalAreaM2": {"value": None, "source": None},
+                "referenceLengthM": {"value": None, "source": None},
+            },
+            "aeroBalance": {"frontPct": None, "missing": ["monitor cm"]},
+            "convergence": {"settled": None, "reasons": ["brak historii monitorów cx/cz"]},
+        },
+        "methods": {"mrfFan": None, "wheelRotation": None, "solverSessions": []},
+        "mesh": {"cells": None, "boundaryLayers": None},
+        "monitors": {},
+        "warnings": [],
+        "notesForAgent": [],
+    }
+
+
+def test_build_pack_writes_chatbot_brief(tmp_path: Path):
+    from ingest.pack import build_pack
+
+    case = tmp_path / "CASE2"
+    case.mkdir()
+    (case / "setup.cas").write_text(CASE_SETTINGS, encoding="utf-8")
+    (case / "cx-rfile.out").write_text('"cx-rfile"\n1840 1.186406 1.186578\n', encoding="utf-8")
+    (case / "cz-rfile.out").write_text('"cz-rfile"\n1840 3.677229 3.677\n', encoding="utf-8")
+    (case / "cm-rfile.out").write_text('"cm-rfile"\n1840 -0.6699572 -0.67\n', encoding="utf-8")
+    (case / "geometry.yaml").write_text(
+        "vehicle:\n  name: PM09\n  frontalAreaM2: 0.5\n  frontAxleXMm: 35\n  rearAxleXMm: 1585\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    pack = build_pack(case, out)
+    text = (out / "dla-chatbota.md").read_text(encoding="utf-8")
+    refs = pack["kpis"]["references"]
+    q = 0.5 * refs["rho"]["value"] * refs["speedMs"]["value"] ** 2
+    area = refs["frontalAreaM2"]["value"]
+    half_n = int(round(pack["kpis"]["Cd"] * q * area))
+    full_n = int(round(2 * pack["kpis"]["Cd"] * q * area))
+    assert "68.2%" in text
+    assert "0.5 + Cm/Cz" in text
+    assert "FW/RW" in text
+    assert "pół auta (tak liczy solver)" in text
+    assert "całe auto (x2)" in text
+    assert "case:setup.cas" in text
+    assert f"{half_n} N" in text
+    assert f"{full_n} N" in text
+    assert "0.765" in text
+    assert "None" not in text
+    assert "True" not in text
+    assert "False" not in text
+
+
+def test_brief_missing_values_are_brak():
+    from ingest.chatbot_brief import render_brief
+
+    text = render_brief(_sparse_pack())
+    assert "brak" in text
+    assert "None" not in text
+    assert "True" not in text
+    assert "False" not in text
+    assert "| Cd (opór) | brak |" in text
+    assert "| Opór z Cd | brak N | brak N |" in text
+    assert "0.000" not in text
+    assert "Sił na częściach nie ma w tej paczce." in text
+    assert "Nie zgaduj" in text
+    assert text.index("OSTROŻNIE") < text.index("Najważniejsze liczby")
+
+
+def test_brief_unsettled_warning_is_at_the_top(tmp_path: Path):
+    from ingest.pack import build_pack
+
+    case = tmp_path / "CASE3"
+    case.mkdir()
+    (case / "setup.cas").write_text(CASE_SETTINGS, encoding="utf-8")
+
+    def rfile(name: str, start: float, step: float) -> None:
+        rows = "\n".join(f"{i} {start + step * i:.6f} {start + step * i:.6f}" for i in range(1, 861))
+        (case / f"{name}-rfile.out").write_text(f'"{name}-rfile"\n' + rows + "\n", encoding="utf-8")
+
+    rfile("cx", 1.64, 0.00001)
+    rfile("cz", 5.40, -0.001)
+    rfile("cm", -0.60, 0.0002)
+    (case / "fluent-20260922-203448-11632.trn").write_text(
+        '(cx-gui-do cx-set-integer-entry "Run*IntegerEntry1(Number of Iterations)" 2000)\n'
+        "  iter  continuity  x-velocity  y-velocity  z-velocity           k       omega\n"
+        "   860  5.3427e-03  1.4221e-07  1.1637e-07  1.1548e-07  2.3201e-03  1.1603e-03 14:43:58 1140\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    build_pack(case, out)
+    text = (out / "dla-chatbota.md").read_text(encoding="utf-8")
+    assert text.index("## Czy można ufać liczbom") < text.index("## Najważniejsze liczby")
+    assert text.index("NIE PORÓWNUJ") < text.index("## Najważniejsze liczby")
+    assert "1140" in text
+    assert "2000" in text
+
+
+def test_brief_settled_earlier_crash_stays_ok():
+    from ingest.chatbot_brief import render_brief
+
+    pack = _sparse_pack()
+    pack["kpis"]["convergence"] = {
+        "settled": True,
+        "reasons": [],
+        "stoppedEarly": False,
+        "cm": {"window": 200, "delta": 0.0012, "driftPct": 17.8},
+    }
+    pack["methods"]["solverSessions"] = [
+        {"file": "old.trn", "crashed": True, "crashReasons": ["brak pamięci"]},
+        {"file": "new.trn", "crashed": False, "lastIteration": 1840},
+    ]
+    text = render_brief(pack)
+    assert "Werdykt: OK" in text
+    assert "NIE PORÓWNUJ" not in text
+    assert "Informacyjnie: Sesja old.trn padła: brak pamięci." in text
+    assert "| cm | 200 | 0.0012 | nie dotyczy |" in text
+    assert "cm ocenia się przez przesunięcie balansu, nie przez procent." in text
+
+
+def test_brief_crashed_solving_session_rejects():
+    from ingest.chatbot_brief import render_brief
+
+    pack = _sparse_pack()
+    pack["kpis"]["convergence"] = {"settled": True, "reasons": [], "stoppedEarly": False}
+    pack["methods"]["solverSessions"] = [
+        {"file": "old.trn", "crashed": True, "crashReasons": ["brak pamięci"]},
+        {"file": "new.trn", "crashed": True, "crashReasons": ["floating point exception"], "lastIteration": 40},
+    ]
+    text = render_brief(pack)
+    assert "Werdykt: NIE PORÓWNUJ" in text
+    assert "Informacyjnie: Sesja old.trn padła: brak pamięci." in text
+    assert "Sesja new.trn padła: floating point exception." in text
+    assert "Informacyjnie: Sesja new.trn" not in text
+
+
+def test_brief_part_forces_table():
+    from ingest.chatbot_brief import render_brief
+
+    pack = _sparse_pack()
+    pack["kpis"]["components"] = {
+        "groups": {
+            "fw": {"Cd": 0.4, "Cl": -1.2, "downforceCoeff": 1.2, "shareDragPct": 33.333, "shareDownforcePct": 40.0},
+        }
+    }
+    text = render_brief(pack)
+    assert "przednie skrzydło (FW)" in text
+    assert "0.400" in text
+    assert "33.3%" in text
+    assert "40.0%" in text
+

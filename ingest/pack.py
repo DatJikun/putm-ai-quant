@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ingest.balance import aero_balance
+from ingest.chatbot_brief import write_brief
 from ingest.car_layout import stamp_frames
 from ingest.cas_setup import parse_cas_setup
 from ingest.inventory import scan_folder
@@ -625,4 +626,5 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
     (out_dir / "aeropack.json").write_text(
         json.dumps(pack, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+    write_brief(pack, out_dir)
     return pack
