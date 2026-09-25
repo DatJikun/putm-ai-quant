@@ -37,6 +37,14 @@ RESIDUAL_ROW_RE = re.compile(
     r"(?:\s+([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?))?",
     re.M,
 )
+DIVERGENCE_RE = re.compile(r"Divergence detected in AMG solver:\s*([A-Za-z -]+?)(?:\s{2,}|$)", re.M)
+FPE_RE = re.compile(r"floating point exception", re.I)
+BAD_TERMINATION_RE = re.compile(r"BAD TERMINATION OF ONE OF YOUR APPLICATION PROCESSES")
+SIGSEGV_RE = re.compile(r"Received signal SIGSEGV")
+WALL_NORMAL_RE = re.compile(
+    r"wall motion has a significant normal component on\s+(\d+)\s+faces of face zone\s+(\d+)",
+    re.I,
+)
 YPLUS_STAT_RE = re.compile(
     r"(area-weighted average|minimum|maximum|min|max|average)"
     r"\s+of\s+y-?plus\s+on\s+(\S+)\s*(?:=|is)\s*"
@@ -136,6 +144,33 @@ def _merge_yplus(previous: dict | None, incoming: dict) -> dict:
     return _yplus_record(zones)
 
 
+def _solver_health(text: str) -> dict:
+    divergence: dict[str, int] = {}
+    for m in DIVERGENCE_RE.finditer(text):
+        eq = m.group(1).strip()
+        divergence[eq] = divergence.get(eq, 0) + 1
+    wall_normal = [
+        {"faces": int(m.group(1)), "zoneId": int(m.group(2))}
+        for m in WALL_NORMAL_RE.finditer(text)
+    ]
+    fpe = len(FPE_RE.findall(text))
+    reasons = []
+    if fpe:
+        reasons.append("floating point exception")
+    if SIGSEGV_RE.search(text):
+        reasons.append("SIGSEGV")
+    if MEMORY_RE.search(text):
+        reasons.append("brak pamięci")
+    crashed = fpe > 0 or bool(BAD_TERMINATION_RE.search(text) or SIGSEGV_RE.search(text))
+    return {
+        "crashed": crashed,
+        "crashReasons": reasons if crashed else [],
+        "floatingPointExceptions": fpe,
+        "divergence": divergence,
+        "wallMotionNormal": wall_normal,
+    }
+
+
 def parse_transcript(path: Path) -> dict:
     text = path.read_text(encoding="utf-8", errors="replace")
     hits: list[dict] = []
@@ -214,17 +249,34 @@ def parse_transcript(path: Path) -> dict:
     y_plus = _parse_yplus(text)
     if y_plus:
         extracted["yPlus"] = y_plus
+    health = _solver_health(text)
+    extracted["solverHealth"] = health
+    for m in list(FPE_RE.finditer(text))[:1]:
+        add("crash", m)
+    for m in list(DIVERGENCE_RE.finditer(text))[:1]:
+        add("divergence", m)
+    for m in WALL_NORMAL_RE.finditer(text):
+        add("wall-motion", m)
     extracted["hits"] = hits[:80]
     return extracted
 
 
 def parse_transcripts(paths: list[Path]) -> dict:
-    parsed = [parse_transcript(p) for p in paths]
+    # fluent-YYYYMMDD-HHMMSS-PID.trn sorts by session start
+    parsed = [parse_transcript(p) for p in sorted(paths, key=lambda p: p.name)]
     merged: dict = {"files": [p["file"] for p in parsed], "hits": []}
+    merged["sessions"] = [
+        {
+            "file": item["file"],
+            "lastIteration": (item.get("residuals") or {}).get("iteration"),
+            **item["solverHealth"],
+        }
+        for item in parsed
+    ]
     for item in parsed:
         merged["hits"].extend(item.get("hits", []))
         for key, value in item.items():
-            if key in {"file", "hits"}:
+            if key in {"file", "hits", "solverHealth"}:
                 continue
             if key == "residuals" and isinstance(value, dict):
                 previous = merged.get("residuals") or {}

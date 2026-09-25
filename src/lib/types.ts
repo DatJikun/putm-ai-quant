@@ -107,6 +107,9 @@ export type FluentCase = {
   yPlusFloor: YPlusStats | null
   minOrthogonalQuality?: number | null
   mrfFan?: boolean
+  wheelsRotate?: boolean | null
+  solverCrashes?: string[]
+  solverSessionCount?: number
 }
 
 export type AeroKpis = {
@@ -115,6 +118,7 @@ export type AeroKpis = {
   Cs: number | null
   LOverD: number | null
   frontBalancePct: number | null
+  balanceAxles?: { front: number | null; rear: number | null } | null
   downforceN: number | null
   dragN: number | null
   components: ComponentForce[]

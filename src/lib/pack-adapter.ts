@@ -283,6 +283,13 @@ export function adaptAeropack(
     yPlusFloor,
     minOrthogonalQuality: num(mesh.minOrthogonalQuality),
     mrfFan: Boolean(methods.mrfFan),
+    wheelsRotate: methods.wheelRotation ? Boolean(methods.wheelRotation.front && methods.wheelRotation.rear) : null,
+    solverCrashes: (Array.isArray(methods.solverSessions) ? methods.solverSessions : [])
+      .filter((session: { crashed?: boolean }) => session.crashed)
+      .map((session: { file?: string; crashReasons?: string[] }) =>
+        `${session.file}: ${(session.crashReasons || []).join(", ") || "BAD TERMINATION"}`,
+      ),
+    solverSessionCount: Array.isArray(methods.solverSessions) ? methods.solverSessions.length : 0,
   }
 
   const compGroups = kpisRaw.components?.groups || {}
@@ -321,21 +328,22 @@ export function adaptAeropack(
     num(kpisRaw.LOverD) ??
     (cdVal != null && downforceCoeff != null && cdVal !== 0 ? downforceCoeff / cdVal : null)
 
-  const fwGroup = compGroups.fw
-  const rwGroup = compGroups.rw
-  let frontBalancePct: number | null = null
-  const fwDf = Math.abs(num(fwGroup?.downforceCoeff) ?? num(fwGroup?.Fz) ?? NaN)
-  const rwDf = Math.abs(num(rwGroup?.downforceCoeff) ?? num(rwGroup?.Fz) ?? NaN)
-  if (Number.isFinite(fwDf) && Number.isFinite(rwDf) && fwDf + rwDf > 0) {
-    frontBalancePct = Math.round((fwDf / (fwDf + rwDf)) * 100)
-  } else if (num(fwGroup?.shareDownforcePct) != null && num(rwGroup?.shareDownforcePct) != null) {
-    const fwShare = num(fwGroup.shareDownforcePct) as number
-    const rwShare = num(rwGroup.shareDownforcePct) as number
-    if (fwShare + rwShare > 0) frontBalancePct = Math.round((fwShare / (fwShare + rwShare)) * 100)
-  }
+  const balanceRaw = kpisRaw.aeroBalance || {}
+  const frontBalancePct = num(balanceRaw.frontPct)
+  const balanceAxles =
+    frontBalancePct == null
+      ? null
+      : { front: num(balanceRaw.frontDownforceCoeff), rear: num(balanceRaw.rearDownforceCoeff) }
   if (cdVal == null) dataGaps.push("Brak Cd.")
   if (clVal == null) dataGaps.push("Brak Cl.")
-  if (frontBalancePct == null) dataGaps.push("Brak balansu przód/tył (nie ma pary FW i RW).")
+  if (frontBalancePct == null) {
+    const missing: string[] = Array.isArray(balanceRaw.missing) ? balanceRaw.missing : []
+    dataGaps.push(
+      missing.length
+        ? `Brak balansu przód/tył: ${missing.join(", ")}.`
+        : "Brak balansu przód/tył (paczka nie ma kpis.aeroBalance).",
+    )
+  }
 
   const kpis: AeroKpis = {
     Cd: cdVal,
@@ -343,6 +351,7 @@ export function adaptAeropack(
     Cs: num(kpisRaw.Cs),
     LOverD: lOverD,
     frontBalancePct,
+    balanceAxles,
     downforceN:
       downforceCoeff != null && qDyn != null && frontalArea != null
         ? downforceCoeff * qDyn * frontalArea

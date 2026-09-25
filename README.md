@@ -33,7 +33,8 @@ fsae-ai-quant/
 │   ├── geometry.yaml       # Karty geometrii urządzeń aero (FW, RW, floor, etc.)
 │   └── slices.yaml         # Metadane płaszczyzn przekrojów X/Y/Z
 ├── tests/                  # Testy jednostkowe parserów i konwersji
-│   └── test_ingest.py      # 9 testów pytest weryfikujących numerykę i wektory
+│   ├── test_ingest.py      # testy pytest parserów, balansu i numeryki
+│   └── adapter-gaps.test.ts # testy adaptera paczki pod UI (npm test)
 ├── packs/                  # Wygenerowane paczki symulacji (np. BASELINEiter002)
 │   └── BASELINEiter002/    # aeropack.json, geometry.yaml, index zdjęć
 └── src/                    # Warsztat Next.js 16 (App Router + Tailwind v4 + shadcn)
@@ -53,15 +54,16 @@ Ingest działa całkowicie lokalnie, obok Twoich plików Fluent i CAD. Nie wymag
 ```bash
 pip install -r requirements.txt
 # Opcjonalnie do cad_measure.py (analiza brył STEP):
-# pip install ocp pyyaml regex
+# pip install cadquery-ocp
 ```
 
 ### Uruchomienie testów
 
 ```bash
 python -m pytest
+npm test
 ```
-Wszystkie 9 testów jednostkowych weryfikuje m.in.:
+Testy weryfikują m.in.:
 - Wykrywanie wersji Fluenta, komórek, jakości siatki i błędów Metis z transcriptu.
 - Weryfikację wektora siły `(0, 0, -1)` w Scheme blob `.cas` i interpretację znaku downforce.
 - Podział sił na strefy z odrzuceniem `domain_ground` i `domain_sky`.
@@ -149,7 +151,8 @@ W symulacjach symetrii (pół bolidu, jazda na wprost) recenzent trzyma się twa
 1. **Wektor siły $C_z$**: W Ansys Fluent wektor raportu `lift` bywa ustawiany jako `(0, 0, -1)` (wtedy dodatnia wartość w pliku to fizyczny downforce) lub `(0, 0, 1)` (wtedy dodatnia to siła nośna). AeroPack sprawdza plik `.cas` i jawnie wyznacza `czPositiveMeans`.
 2. **Pole odniesienia $A_{ref}$**: W symulacji half-car pole odniesienia musi odpowiadać geometrii (jeśli siły są na pół auta, $A_{ref}$ również musi być na połowę, np. $0.5\text{ m}^2$, inaczej współczynniki będą przekłamane o współczynnik 2).
 3. **Brak interpretacji yaw z $C_s$**: W modelu symetrii siła boczna $C_s \neq 0$ wynika z asymetrii siatki lub niestabilności numerycznej, nie z kąta znoszenia.
-4. **Koła bez rotacji**: Jeśli w setupie koła nie mają zadanej rotacji (MRF / rotating wall), opór kół (często >27% całego auta) jest zaburzony i agent flaguje to jako uwagę.
+4. **Balans aero**: liczony w `ingest/balance.py` z monitora `cm`, punktu i osi momentu, długości odniesienia oraz osi obrotu kół — wszystko czytane z ustawień case'a (`.cas.h5` albo tekstowy `.cas`). Wynik trafia do `kpis.aeroBalance`. Udział FW/(FW+RW) nie jest balansem: pomija podłogę i to, gdzie wzdłuż auta działa docisk.
+5. **Koła bez rotacji**: Jeśli w setupie koła nie mają zadanej rotacji (MRF / rotating wall), opór kół (często >27% całego auta) jest zaburzony i agent flaguje to jako uwagę.
 
 ---
 

@@ -9,11 +9,16 @@ vehicle:
   rideHeightFrontMm: TBD
   rideHeightRearMm: TBD
   rakeDeg: TBD
-  wheelbaseMm: 1550
+  wheelbaseMm: 1530
+  # Osie obrotu kół z Baseline002.cas.h5 (surface_*_wheel-rotary). Pack bierze je z case'a,
+  # te pola są zapasem dla case'ów bez ustawień kół.
+  frontAxleXMm: 0
+  rearAxleXMm: 1530
+  groundZMm: 0
   trackMm: TBD
   frontalAreaM2: 0.5
   frontalAreaBasis: half
-  origin: "X rośnie do tyłu; post-pro X od -1.1 do 2.5 m. Wheelbase z środków REF-BOX kół (~35 mm i ~1585 mm)."
+  origin: "X rośnie do tyłu; post-pro X od -1.1 do 2.5 m. Oś przednia X=0, tylna X=1530 mm (oś obrotu kół w solverze)."
   xIncreases: rearward
   zPositive: up
 

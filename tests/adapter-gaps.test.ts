@@ -22,6 +22,7 @@ test("adapter leaves missing solver fields empty", () => {
   assert.equal(adapted.kpis.Cd, null)
   assert.equal(adapted.kpis.Cl, null)
   assert.equal(adapted.kpis.frontBalancePct, null)
+  assert.ok(adapted.dataGaps.some((gap) => gap.startsWith("Brak balansu przód/tył")))
   assert.equal(adapted.kpis.components.length, 0)
   assert.equal(adapted.fluentCase.residuals.continuity, null)
   assert.equal(adapted.fluentCase.yPlusWings, null)
@@ -67,6 +68,7 @@ test("adapter reads residuals, y+ and zone checksum from the pack", () => {
             rw: { Cd: 0.4, Cl: -1.0, downforceCoeff: 1.0, shareDownforcePct: 32, shareDragPct: 33 },
           },
         },
+        aeroBalance: { frontPct: 68.2, frontDownforceCoeff: 2.5086, rearDownforceCoeff: 1.1687 },
       },
       warnings: [],
       notesForAgent: [],
@@ -82,9 +84,44 @@ test("adapter reads residuals, y+ and zone checksum from the pack", () => {
   assert.equal(adapted.kpis.Cd, 1.2)
   assert.equal(adapted.kpis.Cl, -3.1)
   assert.equal(adapted.kpis.components.length, 2)
-  assert.equal(adapted.kpis.frontBalancePct, 58)
+  assert.equal(adapted.kpis.frontBalancePct, 68.2)
+  assert.deepEqual(adapted.kpis.balanceAxles, { front: 2.5086, rear: 1.1687 })
+  assert.ok(adapted.review.findings.some((finding) => finding.id === "balance-front"))
   assert.equal(adapted.cad.wheelbaseMm, 1550)
   assert.equal(adapted.cad.triangles, null)
   assert.ok(adapted.review.findings.some((finding) => finding.id === "force-checksum"))
   assert.ok(adapted.review.findings.some((finding) => finding.id === "rw-dirty-air"))
+})
+
+test("adapter does not derive balance from FW/RW shares and flags crashed sessions", () => {
+  const adapted = adaptAeropack(
+    {
+      schema: "aeropack/v1",
+      identity: { caseId: "crash", vehicle: "PM09", halfModel: true, yawDeg: 0 },
+      methods: {
+        solverSessions: [{ file: "fluent-1.trn", crashed: true, crashReasons: ["floating point exception"] }],
+      },
+      mesh: {},
+      monitors: {},
+      kpis: {
+        components: {
+          groups: {
+            fw: { downforceCoeff: 1.4, shareDownforcePct: 45 },
+            rw: { downforceCoeff: 1.0, shareDownforcePct: 32 },
+          },
+        },
+        aeroBalance: { frontPct: null, missing: ["monitor cm"] },
+      },
+      warnings: [],
+      notesForAgent: [],
+    },
+    [],
+    "",
+  )
+
+  assert.equal(adapted.kpis.frontBalancePct, null)
+  assert.ok(adapted.dataGaps.includes("Brak balansu przód/tył: monitor cm."))
+  const crash = adapted.review.findings.find((finding) => finding.id === "solver-crash")
+  assert.equal(crash?.severity, "issue")
+  assert.ok(crash?.evidence.includes("floating point exception"))
 })

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ingest.pictures import component_stations, index_pictures
 from ingest.rfile import parse_rfile
 from ingest.slices import station_m, load_slices
@@ -541,4 +543,191 @@ def test_setup_trace_keeps_values_not_a_journal(tmp_path: Path):
     assert trace["tui"] == ["/define/boundary-conditions/wall domain_ground"]
     assert any(item.startswith("Velocity") for item in trace["values"])
     assert "k-omega (2 eqn)" in trace["models"]
+
+
+# Fragments copied from Baseline002.cas.h5 /settings (Rampant + Thread Variables).
+CASE_SETTINGS = (
+    '0.6786817908287048))))) (monitor/report-definitions (((name . "cm") (report-definition moment '
+    '(mom-center 0.765 0. 0.) (mom-axis 0. 1. 0.) (reference-frame . "global") (old-props mom-center '
+    '(0.765 0. 0.) mom-axis (0. 1. 0.) reference-frame "global" per-zone? #f average-over 100 '
+    'thread-names (surface_fw surface_rw surface_ut) header "" scaled? #t name "cm" type "moment") '
+    '(per-zone? . #f) (scaled? . #t))) ((name . "cx") (report-definition drag (force-vector 1. 0. 0.) '
+    '(per-zone? . #f) (type "drag"))) ((name . "cz") (report-definition lift (force-vector 0. 0. -1.) '
+    '(old-props force-vector (0. 0. -1.) name "cz" type "lift") (per-zone? . #f) (scaled? . #t))))\n'
+    "(reference-velocity 15.)\n(reference-length 1.529999971389771)\n(reference-density 1.225)\n"
+    "(reference-viscosity 1.7894e-05)\n(reference-area 0.4940756857395172)\n"
+    "(39 (377 wall surface_front_wheel-steady 1)(  (rotating? . #f)  (omega . 0)  (x-origin . 0) ))\n"
+    "(39 (378 wall surface_front_wheel-rotary 1)(  (rotating? . #t)  (omega . -72.90000000000001)  "
+    "(x-origin . 0.)  (y-origin . -0.7)  (z-origin . 0.20574)  (ai . 0)  (aj . 1)  (ak . 0) ))\n"
+    "(39 (379 wall surface_rear_wheel-rotary 1)(  (rotating? . #t)  (omega . -72.90000000000001)  "
+    "(x-origin . 1.53)  (y-origin . -0.7)  (z-origin . 0.20574)  (ai . 0)  (aj . 1)  (ak . 0) ))\n"
+)
+
+
+def test_case_settings_give_moment_references_and_wheels():
+    from ingest.cas_setup import parse_settings_text
+
+    out = parse_settings_text(CASE_SETTINGS)
+    cm = out["reports"]["cm"]
+    assert cm["type"] == "moment"
+    assert cm["momentCenterM"] == [0.765, 0.0, 0.0]
+    assert cm["momentAxis"] == [0.0, 1.0, 0.0]
+    assert cm["scaled"] is True
+    assert out["reports"]["cz"]["forceVector"] == [0.0, 0.0, -1.0]
+    assert abs(out["references"]["lengthM"] - 1.53) < 1e-6
+    assert abs(out["references"]["areaM2"] - 0.49407) < 1e-5
+    assert out["references"]["velocityMs"] == 15.0
+    assert set(out["wheels"]) == {"front", "rear"}
+    assert out["wheels"]["front"]["zone"] == "surface_front_wheel-rotary"
+    assert out["wheels"]["front"]["originM"] == [0.0, -0.7, 0.20574]
+    assert out["wheels"]["rear"]["originM"][0] == 1.53
+
+
+def test_cas_h5_settings_are_read_without_the_mesh(tmp_path: Path):
+    h5py = pytest.importorskip("h5py")
+    import numpy as np
+
+    from ingest.cas_setup import parse_cas_setup
+
+    path = tmp_path / "case.cas.h5"
+    rampant, threads = CASE_SETTINGS.split("(39 ", 1)
+    with h5py.File(path, "w") as handle:
+        settings = handle.create_group("settings")
+        settings.create_dataset("Rampant Variables", data=np.array([rampant.encode()]))
+        settings.create_dataset("Thread Variables", data=np.array([("(39 " + threads).encode()]))
+    out = parse_cas_setup([path])
+    assert out["verified"] is True
+    assert out["czPositiveMeans"] == "downforce"
+    assert out["reports"]["cm"]["momentCenterM"] == [0.765, 0.0, 0.0]
+    assert out["referencesSource"] == "case.cas.h5"
+    assert out["wheels"]["rear"]["originM"][0] == 1.53
+
+
+def test_gzipped_ascii_case_is_decompressed(tmp_path: Path):
+    import gzip
+
+    from ingest.cas_setup import parse_cas_setup
+
+    path = tmp_path / "case.cas.gz"
+    with gzip.open(path, "wt", encoding="latin1") as handle:
+        handle.write(CASE_SETTINGS)
+    out = parse_cas_setup([path])
+    assert out["verified"] is True
+    assert out["reports"]["cm"]["momentAxis"] == [0.0, 1.0, 0.0]
+
+
+def test_balance_from_baseline002_moment():
+    from ingest.balance import aero_balance
+
+    # Baseline002 monitors after 1840 iterations; cm about x=0.765 m, axis +Y, L_ref = wheelbase.
+    out = aero_balance(
+        cd=1.186406,
+        downforce=3.677229,
+        cm=-0.6699572,
+        moment_center_m=[0.765, 0.0, 0.0],
+        moment_axis=[0.0, 1.0, 0.0],
+        moment_scaled=True,
+        reference_length_m=1.53,
+        front_axle_x_m=0.0,
+        rear_axle_x_m=1.53,
+        ground_z_m=0.0,
+        cx_vector=[1.0, 0.0, 0.0],
+    )
+    # centre at mid-wheelbase on the ground: front share = 0.5 - cm / downforce
+    assert out["frontPct"] == round(100 * (0.5 + 0.6699572 / 3.677229), 1) == 68.2
+    assert abs(out["frontDownforceCoeff"] + out["rearDownforceCoeff"] - 3.677229) < 1e-3
+    assert out["assumptions"] == []
+
+
+def test_balance_point_load_on_front_axle_is_all_front():
+    from ingest.balance import aero_balance
+
+    # 2.0 downforce exactly on the front axle, moment taken about a raised point behind it
+    xp, zp, cd, df = 0.9, 0.3, 1.0, 2.0
+    cm_times_l = (0.0 - xp) * df + (0.2 - zp) * cd  # drag acting at z = 0.2 m
+    out = aero_balance(
+        cd=cd,
+        downforce=df,
+        cm=cm_times_l / 1.5,
+        moment_center_m=[xp, 0.0, zp],
+        moment_axis=[0.0, 1.0, 0.0],
+        moment_scaled=True,
+        reference_length_m=1.5,
+        front_axle_x_m=0.0,
+        rear_axle_x_m=1.5,
+        ground_z_m=0.0,
+        cx_vector=[1.0, 0.0, 0.0],
+    )
+    # drag 0.2 m above the ground unloads the front by cd * 0.2 / wheelbase
+    expected_front = df - cd * 0.2 / 1.5
+    assert abs(out["frontDownforceCoeff"] - expected_front) < 1e-4
+
+
+def test_balance_refuses_yaw_axis_and_missing_axles():
+    from ingest.balance import aero_balance
+
+    out = aero_balance(
+        cd=1.2,
+        downforce=3.6,
+        cm=-0.6,
+        moment_center_m=[0.765, 0.0, 0.0],
+        moment_axis=[0.0, 0.0, 1.0],
+        moment_scaled=True,
+        reference_length_m=1.53,
+        front_axle_x_m=None,
+        rear_axle_x_m=None,
+        ground_z_m=None,
+        cx_vector=None,
+    )
+    assert out["frontPct"] is None
+    assert any("pochylanie" in item for item in out["missing"])
+    assert any("osi kół" in item for item in out["missing"])
+
+
+def test_transcript_flags_divergence_and_crash(tmp_path: Path):
+    p = tmp_path / "fluent-20260920-203616-5464.trn"
+    p.write_text(
+        """
+  iter  continuity  x-velocity  y-velocity  z-velocity           k       omega          cx          cz          cm     time/iter
+
+WARNING: The wall motion has a significant normal component on 3325 faces of face zone 283.
+Divergence detected in AMG solver: pressure correction        Stabilizing k to enhance linear solver robustness.
+Divergence detected in AMG solver: k        Stabilizing omega to enhance linear solver robustness.
+Divergence detected in AMG solver: pressure correction
+Error at host: floating point exception
+=   BAD TERMINATION OF ONE OF YOUR APPLICATION PROCESSES
+""",
+        encoding="utf-8",
+    )
+    health = parse_transcript(p)["solverHealth"]
+    assert health["crashed"] is True
+    assert health["crashReasons"] == ["floating point exception"]
+    assert health["divergence"] == {"pressure correction": 2, "k": 1}
+    assert health["wallMotionNormal"] == [{"faces": 3325, "zoneId": 283}]
+
+
+def test_build_pack_balance_from_case_settings(tmp_path: Path):
+    from ingest.pack import build_pack
+
+    case = tmp_path / "CASE2"
+    case.mkdir()
+    (case / "setup.cas").write_text(CASE_SETTINGS, encoding="utf-8")
+    (case / "cx-rfile.out").write_text('"cx-rfile"\n1840 1.186406 1.186578\n', encoding="utf-8")
+    (case / "cz-rfile.out").write_text('"cz-rfile"\n1840 3.677229 3.677\n', encoding="utf-8")
+    (case / "cm-rfile.out").write_text('"cm-rfile"\n1840 -0.6699572 -0.67\n', encoding="utf-8")
+    (case / "geometry.yaml").write_text(
+        "vehicle:\n  name: PM09\n  frontalAreaM2: 0.5\n  frontAxleXMm: 35\n  rearAxleXMm: 1585\n",
+        encoding="utf-8",
+    )
+    pack = build_pack(case, tmp_path / "out")
+    refs = pack["kpis"]["references"]
+    assert refs["frontalAreaM2"]["source"] == "case:setup.cas"
+    assert abs(refs["frontalAreaM2"]["value"] - 0.49407) < 1e-5
+    assert abs(refs["referenceLengthM"]["value"] - 1.53) < 1e-6
+    balance = pack["kpis"]["aeroBalance"]
+    assert balance["frontPct"] == 68.2
+    assert balance["sources"]["axles"].startswith("case:setup.cas")
+    assert balance["inputs"]["groundZM"] == 0.0
+    assert pack["methods"]["wheelRotation"]["front"]["omegaRadS"] == -72.9
+    assert not any(w.startswith("Balans aero niepoliczony") for w in pack["warnings"])
 

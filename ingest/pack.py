@@ -5,6 +5,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ingest.balance import aero_balance
 from ingest.car_layout import stamp_frames
 from ingest.cas_setup import parse_cas_setup
 from ingest.inventory import scan_folder
@@ -69,6 +70,37 @@ def _geometry_summary(doc: dict, source: str) -> dict:
         "withChord": with_chord,
         "profilesTbd": profiles_tbd,
     }
+
+
+def _reference(case_value, case_source: str, yaml_value, default, default_source: str) -> dict:
+    if _num(case_value) is not None:
+        return {"value": float(case_value), "source": case_source}
+    if _num(yaml_value) is not None:
+        return {"value": float(yaml_value), "source": "geometry.yaml"}
+    return {"value": default, "source": default_source}
+
+
+def _axles(setup: dict, vehicle: dict, speed_ms: float | None) -> dict:
+    wheels = setup.get("wheels") or {}
+    front = (wheels.get("front") or {}).get("originM") or [None, None, None]
+    rear = (wheels.get("rear") or {}).get("originM") or [None, None, None]
+    out = {"frontXM": front[0], "rearXM": rear[0], "groundZM": None, "source": None}
+    if out["frontXM"] is not None and out["rearXM"] is not None:
+        out["source"] = f"case:{setup.get('wheelsSource')} (oś obrotu kół)"
+    else:
+        fx = _num(vehicle.get("frontAxleXMm"))
+        rx = _num(vehicle.get("rearAxleXMm"))
+        out["frontXM"] = None if fx is None else fx / 1000.0
+        out["rearXM"] = None if rx is None else rx / 1000.0
+        out["source"] = "geometry.yaml" if fx is not None and rx is not None else None
+    ground = _num(vehicle.get("groundZMm"))
+    if ground is not None:
+        out["groundZM"] = ground / 1000.0
+    else:
+        omega = (wheels.get("front") or {}).get("omegaRadS")
+        if front[2] is not None and omega and speed_ms:
+            out["groundZM"] = round(front[2] - speed_ms / abs(omega), 4)
+    return out
 
 
 def _abs(root: Path, rels: list[str]) -> list[Path]:
@@ -167,14 +199,7 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
     files = inventory["files"]
     transcripts = parse_transcripts(_abs(case_root, files["transcripts"])) if files["transcripts"] else {}
     reports = parse_rfiles(_abs(case_root, files["reports"])) if files["reports"] else {}
-    cas_paths = []
-    skipped_cas: list[str] = []
-    for cas_path in _abs(case_root, files["cas"]):
-        if cas_path.exists() and cas_path.stat().st_size > 200_000_000:
-            skipped_cas.append(cas_path.name)
-            continue
-        cas_paths.append(cas_path)
-    setup = parse_cas_setup(cas_paths)
+    setup = parse_cas_setup(_abs(case_root, files["cas"]))
     slices = load_slices()
     case_geom = _abs(case_root, files["geometryYaml"])
     geom_path = case_geom[0] if case_geom else (
@@ -215,25 +240,23 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         stamp_frames(images["index"], step_cards)
     vehicle = geometry_doc.get("vehicle") if isinstance(geometry_doc.get("vehicle"), dict) else {}
     vehicle_name = vehicle.get("name") if isinstance(vehicle.get("name"), str) and vehicle.get("name") else None
-    aref = _num(vehicle.get("frontalAreaM2"))
     aref_basis = vehicle.get("frontalAreaBasis") if isinstance(vehicle.get("frontalAreaBasis"), str) else AREF_BASIS
-    speed = _num(vehicle.get("speedMs"))
-    rho = _num(vehicle.get("rho"))
+    case_refs = setup.get("references") or {}
+    case_src = f"case:{setup.get('referencesSource')}"
     references = {
-        "speedMs": {
-            "value": speed if speed is not None else SPEED_MS,
-            "source": "geometry.yaml" if speed is not None else "assumed-constant",
-        },
-        "rho": {
-            "value": rho if rho is not None else RHO,
-            "source": "geometry.yaml" if rho is not None else "assumed-constant",
-        },
-        "mu": {"value": MU, "source": "assumed-air"},
-        "frontalAreaM2": {
-            "value": aref if aref is not None else AREF_M2,
-            "source": "geometry.yaml" if aref is not None else "assumed-constant",
-        },
+        "speedMs": _reference(case_refs.get("velocityMs"), case_src, vehicle.get("speedMs"), SPEED_MS, "assumed-constant"),
+        "rho": _reference(case_refs.get("densityKgM3"), case_src, vehicle.get("rho"), RHO, "assumed-constant"),
+        "mu": _reference(case_refs.get("viscosityPaS"), case_src, None, MU, "assumed-air"),
+        "frontalAreaM2": _reference(case_refs.get("areaM2"), case_src, vehicle.get("frontalAreaM2"), AREF_M2, "assumed-constant"),
+        "referenceLengthM": _reference(case_refs.get("lengthM"), case_src, None, None, "brak"),
     }
+    reference_conflicts = []
+    for key, yaml_key in (("frontalAreaM2", "frontalAreaM2"), ("speedMs", "speedMs"), ("rho", "rho")):
+        yaml_value = _num(vehicle.get(yaml_key))
+        used = references[key]["value"]
+        if yaml_value is not None and used and references[key]["source"].startswith("case:"):
+            if abs(yaml_value - used) / abs(used) > 0.02:
+                reference_conflicts.append(f"{key}: case {used:.4g}, geometry.yaml {yaml_value:.4g}")
 
     monitors = reports.get("monitors") or {}
     cx = (monitors.get("cx") or {}).get("averaged")
@@ -250,6 +273,27 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         rho=references["rho"]["value"],
     )
     kpis["references"] = references
+    moment_def = (setup.get("reports") or {}).get("cm") or {}
+    axles = _axles(setup, vehicle, references["speedMs"]["value"])
+    balance = aero_balance(
+        cd=kpis.get("Cd"),
+        downforce=kpis.get("downforceCoeff"),
+        cm=cm,
+        moment_center_m=moment_def.get("momentCenterM"),
+        moment_axis=moment_def.get("momentAxis"),
+        moment_scaled=moment_def.get("scaled"),
+        reference_length_m=references["referenceLengthM"]["value"],
+        front_axle_x_m=axles["frontXM"],
+        rear_axle_x_m=axles["rearXM"],
+        ground_z_m=axles["groundZM"],
+        cx_vector=kpis.get("cxForceVector"),
+    )
+    balance["sources"] = {
+        "moment": f"case:{', '.join(setup.get('files') or [])}" if moment_def else None,
+        "referenceLength": references["referenceLengthM"]["source"],
+        "axles": axles["source"],
+    }
+    kpis["aeroBalance"] = balance
     if transcripts.get("residuals"):
         reports["residuals"] = transcripts["residuals"]
     if transcripts.get("yPlus"):
@@ -290,10 +334,26 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
 
     warnings = list(inventory["warnings"])
     warnings.extend(kpi_warnings)
-    if skipped_cas:
+    warnings.extend(setup.get("errors") or [])
+    if reference_conflicts:
         warnings.append(
-            "Pominięto duży .cas przy czytaniu wektorów sił: " + ", ".join(skipped_cas) + "."
+            "Wartości odniesienia w geometry.yaml różnią się od case'a (użyto case'a): "
+            + "; ".join(reference_conflicts) + "."
         )
+    if balance.get("frontPct") is None:
+        warnings.append("Balans aero niepoliczony — brak: " + ", ".join(balance["missing"]) + ".")
+    for session in (transcripts.get("sessions") or []):
+        if session.get("crashed"):
+            why = ", ".join(session.get("crashReasons") or []) or "BAD TERMINATION"
+            warnings.append(f"Transcript {session['file']}: Fluent padł ({why}).")
+        if session.get("divergence"):
+            eqs = ", ".join(f"{eq} ×{n}" for eq, n in session["divergence"].items())
+            warnings.append(f"Transcript {session['file']}: rozbieżność AMG ({eqs}).")
+        for item in session.get("wallMotionNormal") or []:
+            warnings.append(
+                f"Transcript {session['file']}: ruch ściany ma dużą składową normalną na "
+                f"{item['faces']} ściankach strefy {item['zoneId']} — sprawdź oś obrotu kół."
+            )
     if step_error:
         warnings.append(step_error)
     if step_cards:
@@ -382,6 +442,8 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
             "fluentVersion": transcripts.get("fluentVersion"),
             "turbulence": transcripts.get("turbulenceHit"),
             "mrfFan": transcripts.get("mrfFan"),
+            "wheelRotation": setup.get("wheels") or None,
+            "solverSessions": transcripts.get("sessions") or [],
             "setupTrace": trace,
         },
         "mesh": {
@@ -421,6 +483,12 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
                 f"V∞ {references['speedMs']['value']} m/s ({references['speedMs']['source']})."
             ),
             cz_note,
+            (
+                f"Balans aero {balance['frontPct']}% przód z cm, punktu momentu i osi kół (kpis.aeroBalance). "
+                "Nie licz go z udziału FW/RW."
+                if balance.get("frontPct") is not None
+                else "Balans aero niepoliczony — nie zgaduj go z udziału FW/RW."
+            ),
             "Cd = cx. Siły i Aref są na połowę — nie mnoż ×2 do współczynników.",
             "Strefy: FW=surface_fw, RW=surface_rw, Floor=surface_ut, Body=surface_mono. "
             "domain_ground i domain_sky nie wchodzą do sumy auta.",

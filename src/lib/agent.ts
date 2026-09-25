@@ -171,23 +171,55 @@ export function evaluateCase(
     })
   }
 
-  const fw = componentByName(kpis, /front wing/i)
   const rw = componentByName(kpis, /rear wing/i)
+  const crashes = fluent.solverCrashes ?? []
+  if (crashes.length > 0) {
+    const allCrashed = crashes.length === (fluent.solverSessionCount ?? crashes.length)
+    findings.push({
+      id: "solver-crash",
+      severity: allCrashed ? "issue" : "watch",
+      title: allCrashed
+        ? "Każdy transcript w folderze kończy się awarią Fluenta"
+        : `Fluent padł w ${crashes.length} z ${fluent.solverSessionCount} sesji`,
+      evidence: crashes.join("; "),
+      recommendation: allCrashed
+        ? "Monitory w folderze mogą pochodzić z innej sesji, po której nie ma transcriptu. Potwierdź, z którego przebiegu są liczby, zanim porównasz geometrie."
+        : "Sprawdź, czy monitory pochodzą z sesji bez awarii.",
+    })
+  }
+
+  const axles = kpis.balanceAxles
+  const axleText =
+    axles && axles.front != null && axles.rear != null
+      ? `Docisk na osi przedniej ${axles.front.toFixed(3)}, na tylnej ${axles.rear.toFixed(3)} (współczynniki, z cm i osi kół).`
+      : "Balans z monitora cm i osi kół."
+  const ride =
+    cad.rideHeightFrontMm != null && cad.rideHeightRearMm != null
+      ? ` Ride height ${cad.rideHeightFrontMm}/${cad.rideHeightRearMm} mm, rake ${cad.rakeDeg ?? "brak"}°.`
+      : ""
   if (
     kpis.frontBalancePct != null &&
     kpis.frontBalancePct < FS_RANGES.frontBalance.sweet[0]
   ) {
-    const ride =
-      cad.rideHeightFrontMm != null && cad.rideHeightRearMm != null
-        ? ` Ride height ${cad.rideHeightFrontMm}/${cad.rideHeightRearMm} mm, rake ${cad.rakeDeg ?? "brak"}°.`
-        : ""
     findings.push({
       id: "balance-rear",
       severity: "watch",
       title: `Balans ${kpis.frontBalancePct}% z przodu — auto tyłociężkie aero`,
-      evidence: `Front wing Cl ${fw?.Cl ?? "brak"}, rear wing Cl ${rw?.Cl ?? "brak"}.${ride}`,
+      evidence: `${axleText}${ride}`,
       recommendation:
         "Albo dodać load na FW (kąt / Gurney / mniejszy ride height przodu), albo zdjąć górny płat RW. Ten case jest na yaw 0 — balans w slalomie może wyglądać inaczej.",
+    })
+  } else if (
+    kpis.frontBalancePct != null &&
+    kpis.frontBalancePct > FS_RANGES.frontBalance.sweet[1]
+  ) {
+    findings.push({
+      id: "balance-front",
+      severity: "watch",
+      title: `Balans ${kpis.frontBalancePct}% z przodu — auto przodociężkie aero`,
+      evidence: `${axleText}${ride}`,
+      recommendation:
+        "Przesunąć docisk do tyłu: mniej kąta na FW albo więcej na RW / dyfuzorze. Porównaj z rozkładem masy auta — balans aero powyżej masy daje nadsterowność przy dużej prędkości.",
     })
   }
 
@@ -197,7 +229,7 @@ export function evaluateCase(
       id: "wheel-drag",
       severity: "watch",
       title: "Koła zjadają za dużo drag",
-      evidence: `${wheels.shareDragPct}% całego Cd jest na kołach.${fluent.mrfFan ? " W setupie jest MRF wentylatora, nie kół." : " W packu nie ma potwierdzenia rotacji kół."}`,
+      evidence: `${wheels.shareDragPct}% całego Cd jest na kołach.${fluent.wheelsRotate ? " Koła mają rotating wall w case'ie." : " W packu nie ma potwierdzenia rotacji kół."}`,
       recommendation:
         "Sprawdź, czy koła mają rotating wall albo MRF. Bez rotacji ten udział oporu nie nadaje się do porównań między geometriami.",
     })
@@ -263,7 +295,7 @@ export function evaluateCase(
   if (fluent.yPlusWings == null) {
     questions.push("Jaki jest y+ min/avg/max na FW, RW i podłodze?")
   }
-  if (!fluent.mrfFan) {
+  if (!fluent.wheelsRotate) {
     questions.push("Czy koła mają rotację (MRF albo rotating wall)?")
   }
   if (fluent.yawDeg === 0) {
