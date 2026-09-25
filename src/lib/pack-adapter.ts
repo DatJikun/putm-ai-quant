@@ -290,6 +290,10 @@ export function adaptAeropack(
         `${session.file}: ${(session.crashReasons || []).join(", ") || "BAD TERMINATION"}`,
       ),
     solverSessionCount: Array.isArray(methods.solverSessions) ? methods.solverSessions.length : 0,
+    forcesSettled: typeof kpisRaw.convergence?.settled === "boolean" ? kpisRaw.convergence.settled : null,
+    forceDriftReasons: Array.isArray(kpisRaw.convergence?.reasons) ? kpisRaw.convergence.reasons : [],
+    iterationsLeft: num(kpisRaw.convergence?.iterationsLeft),
+    plannedIterations: num(kpisRaw.convergence?.plannedIterations),
   }
 
   const compGroups = kpisRaw.components?.groups || {}

@@ -186,6 +186,37 @@ def parse_wheel_walls(text: str) -> dict:
     return wheels
 
 
+def _last_flag(text: str, key: str) -> bool | None:
+    hits = re.findall(r"\(" + re.escape(key) + r"\s+\.?\s*#([tf])\)", text)
+    return hits[-1] == "t" if hits else None
+
+
+def parse_turbulence(text: str) -> dict | None:
+    """Settings list some model flags twice; the last occurrence is the active one."""
+    def flag(key: str) -> bool | None:
+        return _last_flag(text, key)
+
+    if flag("rp-lam?"):
+        return {"model": "laminar", "wallTreatment": None}
+    if flag("rp-trans-sst?"):
+        return {"model": "Transition SST", "wallTreatment": "resolved (y+ ~ 1)"}
+    if flag("rp-sa?"):
+        return {"model": "Spalart-Allmaras", "wallTreatment": None}
+    if flag("rp-kw?"):
+        variant = "SST" if flag("kw-sst-on?") else "BSL" if flag("kw-bsl-on?") else "standard"
+        return {"model": f"k-omega {variant}", "wallTreatment": "k-omega (bez funkcji ściany)"}
+    if flag("rp-ke?"):
+        variant = "Realizable" if flag("ke-realizability-on?") else "RNG" if flag("ke-rng?") else "Standard"
+        wall = (
+            "Enhanced Wall Treatment" if flag("ke-enh-wall?")
+            else "Scalable Wall Functions" if flag("ke-scalable-wall?")
+            else "Standard Wall Functions" if flag("ke-std-wall?")
+            else None
+        )
+        return {"model": f"{variant} k-epsilon", "wallTreatment": wall}
+    return None
+
+
 def _is_case(path: Path) -> bool:
     name = path.name.lower()
     return name.endswith((".cas", ".cas.gz", ".cas.h5", ".txt"))
@@ -238,6 +269,7 @@ def parse_settings_text(text: str) -> dict:
         "wallZones": wall_zones,
         "references": parse_reference_values(text),
         "wheels": parse_wheel_walls(text),
+        "turbulence": parse_turbulence(text),
     }
 
 
@@ -285,6 +317,8 @@ def parse_cas_setup(paths: list[Path]) -> dict:
         if one["wheels"] and not merged["wheels"]:
             merged["wheels"] = one["wheels"]
             merged["wheelsSource"] = one["file"]
+        if one["turbulence"] and not merged.get("turbulence"):
+            merged["turbulence"] = {**one["turbulence"], "source": one["file"]}
         if one["verified"] and not merged["verified"]:
             merged["verified"] = True
             merged["source"] = one["file"]

@@ -141,6 +141,26 @@ export function evaluateCase(
     })
   }
 
+  if (fluent.forcesSettled === false) {
+    findings.push({
+      id: "forces-drift",
+      severity: "issue",
+      title: "Siły jeszcze się zmieniają",
+      evidence: (fluent.forceDriftReasons ?? []).join("; "),
+      recommendation:
+        "Doliczyć, aż cx i cz zmieniają się o mniej niż 0,5% w ostatnich 200 iteracjach, a balans o mniej niż 0,5 pp. Do tego czasu nie porównuj tej geometrii z innymi.",
+    })
+  }
+  if (fluent.iterationsLeft != null && fluent.iterationsLeft > 0) {
+    findings.push({
+      id: "stopped-early",
+      severity: "watch",
+      title: "Liczenie zatrzymane przed planem",
+      evidence: `Zabrakło ${fluent.iterationsLeft} z ${fluent.plannedIterations ?? "?"} zaplanowanych iteracji.`,
+      recommendation: "Jeśli zatrzymanie było ręczne, potwierdź je stabilnością sił, nie wyglądem wykresu.",
+    })
+  }
+
   if (fluent.yPlusWings == null && fluent.yPlusFloor == null) {
     findings.push({
       id: "yplus-missing",

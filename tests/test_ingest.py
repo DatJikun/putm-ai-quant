@@ -731,3 +731,99 @@ def test_build_pack_balance_from_case_settings(tmp_path: Path):
     assert pack["methods"]["wheelRotation"]["front"]["omegaRadS"] == -72.9
     assert not any(w.startswith("Balans aero niepoliczony") for w in pack["warnings"])
 
+
+def test_turbulence_model_uses_last_flag_in_settings():
+    from ingest.cas_setup import parse_turbulence
+
+    # Baseline002.cas.h5 lists rp-kw? #t in a first block and the active Realizable k-e later
+    text = (
+        "(rp-ke? #f) (rp-kw? #t)\n"
+        "(rp-seg? . #t) (rp-ke? . #t) (rp-kw? . #f) (rp-turb? . #t)\n"
+        "(ke-realizability-on? . #t) (ke-enh-wall? . #t) (kw-sst-on? . #t)\n"
+    )
+    assert parse_turbulence(text) == {
+        "model": "Realizable k-epsilon",
+        "wallTreatment": "Enhanced Wall Treatment",
+    }
+    assert parse_turbulence("(rp-kw? . #t) (kw-sst-on? . #t)")["model"] == "k-omega SST"
+
+
+def test_solver_transcript_quality_iterations_and_script_errors(tmp_path: Path):
+    p = tmp_path / "fluent-20260922-203448-11632.trn"
+    p.write_text(
+        """
+Minimum Orthogonal Quality =  2.77844e-02 cell 1556210 on zone 36592
+Maximum Aspect Ratio =  4.54166e+03 cell 1556210 on zone 36592
+Minimum Orthogonal Quality =  3.95659e-02 cell 324987 on zone 36592
+Maximum Aspect Ratio =  2.98201e+03 cell 1759746 on zone 36592
+> 0.5
+invalid command [0.5]
+ [iteration] /solve/initialize/set-defaults/pressure '/solve/initialize/set-defaults/pressure' unknown -- enter choice again.
+(cx-gui-do cx-set-integer-entry "Run Calculation*Table1*Table3(Parameters)*Table1*Table1*IntegerEntry1(Number of Iterations)" 2000)
+  iter  continuity  x-velocity  y-velocity  z-velocity           k       omega          cm          cz          cx     time/iter
+   859  5.3660e-03  1.4233e-07  1.1633e-07  1.1545e-07  2.4078e-03  1.1631e-03 -4.4023e-01  4.5610e+00  1.6468e+00 14:28:14 1141
+   860  5.3427e-03  1.4221e-07  1.1637e-07  1.1548e-07  2.3201e-03  1.1603e-03 -4.3965e-01  4.5599e+00  1.6468e+00 14:43:58 1140
+""",
+        encoding="utf-8",
+    )
+    out = parse_transcript(p)
+    assert out["minOrthogonalQuality"] == 0.0395659
+    assert out["maxAspectRatio"] == 2982.01
+    assert out["residuals"]["iteration"] == 860
+    health = out["solverHealth"]
+    assert health["plannedIterations"] == 2000
+    assert health["iterationsLeft"] == 1140
+    assert health["scriptErrorCount"] == 2
+
+
+def test_latest_session_sets_the_mesh_size(tmp_path: Path):
+    from ingest.transcript import parse_transcripts
+
+    old = tmp_path / "fluent-20260920-203616-5464.trn"
+    old.write_text("    47303785 cells,     4 cell zones ...\n", encoding="utf-8")
+    new = tmp_path / "fluent-20260922-203448-11632.trn"
+    new.write_text("    28290274 cells,     4 cell zones ...\n", encoding="utf-8")
+    assert parse_transcripts([new, old])["cells"] == 28_290_274
+
+
+def test_rfile_stability_reports_drift_over_last_window(tmp_path: Path):
+    p = tmp_path / "cz-rfile.out"
+    rows = "\n".join(f"{i} {5.0 - 0.002 * i:.6f} {5.0 - 0.002 * i:.6f}" for i in range(1, 401))
+    p.write_text('"cz-rfile"\n"Iteration" "cz"\n' + rows + "\n", encoding="utf-8")
+    stab = parse_rfile(p)["stability"]
+    assert stab["window"] == 200
+    assert stab["fromIteration"] == 200
+    assert abs(stab["delta"] + 0.4) < 1e-6
+    assert abs(stab["driftPct"] - 100 * -0.4 / 4.2) < 1e-2
+
+
+def test_pack_flags_unsettled_forces_and_early_stop(tmp_path: Path):
+    from ingest.pack import build_pack
+
+    case = tmp_path / "CASE3"
+    case.mkdir()
+    (case / "setup.cas").write_text(CASE_SETTINGS, encoding="utf-8")
+
+    def rfile(name: str, start: float, step: float) -> None:
+        rows = "\n".join(f"{i} {start + step * i:.6f} {start + step * i:.6f}" for i in range(1, 861))
+        (case / f"{name}-rfile.out").write_text(f'"{name}-rfile"\n' + rows + "\n", encoding="utf-8")
+
+    rfile("cx", 1.64, 0.00001)
+    rfile("cz", 5.40, -0.001)
+    rfile("cm", -0.60, 0.0002)
+    (case / "fluent-20260922-203448-11632.trn").write_text(
+        '(cx-gui-do cx-set-integer-entry "Run*IntegerEntry1(Number of Iterations)" 2000)\n'
+        "  iter  continuity  x-velocity  y-velocity  z-velocity           k       omega\n"
+        "   860  5.3427e-03  1.4221e-07  1.1637e-07  1.1548e-07  2.3201e-03  1.1603e-03 14:43:58 1140\n",
+        encoding="utf-8",
+    )
+    pack = build_pack(case, tmp_path / "out")
+    conv = pack["kpis"]["convergence"]
+    assert conv["settled"] is False
+    assert any(reason.startswith("cz zmieniło się") for reason in conv["reasons"])
+    assert conv["balanceShiftPp"] is not None
+    assert conv["stoppedEarly"] is True
+    assert conv["iterationsLeft"] == 1140
+    assert any(w.startswith("Liczenie zatrzymane przed planem") for w in pack["warnings"])
+    assert pack["methods"]["turbulence"] is None or isinstance(pack["methods"]["turbulence"], str)
+

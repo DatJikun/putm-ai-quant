@@ -110,6 +110,10 @@ export type FluentCase = {
   wheelsRotate?: boolean | null
   solverCrashes?: string[]
   solverSessionCount?: number
+  forcesSettled?: boolean | null
+  forceDriftReasons?: string[]
+  iterationsLeft?: number | null
+  plannedIterations?: number | null
 }
 
 export type AeroKpis = {

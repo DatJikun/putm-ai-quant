@@ -111,6 +111,12 @@ test("adapter does not derive balance from FW/RW shares and flags crashed sessio
           },
         },
         aeroBalance: { frontPct: null, missing: ["monitor cm"] },
+        convergence: {
+          settled: false,
+          reasons: ["cz zmieniło się o -6.52% w ostatnich 200 iteracjach"],
+          iterationsLeft: 1140,
+          plannedIterations: 2000,
+        },
       },
       warnings: [],
       notesForAgent: [],
@@ -124,4 +130,8 @@ test("adapter does not derive balance from FW/RW shares and flags crashed sessio
   const crash = adapted.review.findings.find((finding) => finding.id === "solver-crash")
   assert.equal(crash?.severity, "issue")
   assert.ok(crash?.evidence.includes("floating point exception"))
+  const drift = adapted.review.findings.find((finding) => finding.id === "forces-drift")
+  assert.equal(drift?.severity, "issue")
+  assert.ok(drift?.evidence.includes("-6.52%"))
+  assert.ok(adapted.review.findings.some((finding) => finding.id === "stopped-early"))
 })

@@ -103,6 +103,55 @@ def _axles(setup: dict, vehicle: dict, speed_ms: float | None) -> dict:
     return out
 
 
+DRIFT_LIMIT_PCT = 0.5
+BALANCE_LIMIT_PP = 0.5
+
+
+def _force_convergence(monitors: dict, setup: dict, balance: dict, balance_kwargs: dict) -> dict:
+    stab = {name: (monitors.get(name) or {}).get("stability") for name in ("cx", "cz", "cm")}
+    out: dict = {
+        "windowIterations": max((s or {}).get("window") or 0 for s in stab.values()),
+        "cx": stab["cx"],
+        "cz": stab["cz"],
+        "cm": stab["cm"],
+        "limits": {"driftPct": DRIFT_LIMIT_PCT, "balancePp": BALANCE_LIMIT_PP},
+        "balanceShiftPp": None,
+        "settled": None,
+        "reasons": [],
+    }
+    if stab["cx"] and stab["cz"] and stab["cm"] and balance.get("frontPct") is not None:
+        start_kpis, _ = interpret_kpis(
+            stab["cx"]["startValue"], stab["cz"]["startValue"], stab["cm"]["startValue"], setup
+        )
+        start = aero_balance(
+            cd=start_kpis.get("Cd"),
+            downforce=start_kpis.get("downforceCoeff"),
+            cm=stab["cm"]["startValue"],
+            cx_vector=start_kpis.get("cxForceVector"),
+            **balance_kwargs,
+        )
+        if start.get("frontPct") is not None:
+            out["balanceStartPct"] = start["frontPct"]
+            out["balanceShiftPp"] = round(balance["frontPct"] - start["frontPct"], 2)
+    if not (stab["cx"] and stab["cz"]):
+        out["reasons"].append("brak historii monitorów cx/cz")
+        return out
+    if out["windowIterations"] < 150:
+        out["reasons"].append(f"za mało iteracji do oceny ({out['windowIterations']})")
+        return out
+    for name in ("cx", "cz"):
+        drift = stab[name].get("driftPct")
+        if drift is not None and abs(drift) > DRIFT_LIMIT_PCT:
+            out["reasons"].append(
+                f"{name} zmieniło się o {drift:+.2f}% w ostatnich {stab[name]['window']} iteracjach"
+            )
+    shift = out["balanceShiftPp"]
+    if shift is not None and abs(shift) > BALANCE_LIMIT_PP:
+        out["reasons"].append(f"balans przesunął się o {shift:+.2f} pp w tym samym oknie")
+    out["settled"] = not out["reasons"]
+    return out
+
+
 def _abs(root: Path, rels: list[str]) -> list[Path]:
     return [root / rel for rel in rels]
 
@@ -294,6 +343,25 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         "axles": axles["source"],
     }
     kpis["aeroBalance"] = balance
+    convergence = _force_convergence(monitors, setup, balance, balance_kwargs={
+        "moment_center_m": moment_def.get("momentCenterM"),
+        "moment_axis": moment_def.get("momentAxis"),
+        "moment_scaled": moment_def.get("scaled"),
+        "reference_length_m": references["referenceLengthM"]["value"],
+        "front_axle_x_m": axles["frontXM"],
+        "rear_axle_x_m": axles["rearXM"],
+        "ground_z_m": axles["groundZM"],
+    })
+    last_session = next(
+        (s for s in reversed(transcripts.get("sessions") or []) if s.get("lastIteration")),
+        None,
+    )
+    if last_session:
+        convergence["plannedIterations"] = last_session.get("plannedIterations")
+        convergence["iterationsLeft"] = last_session.get("iterationsLeft")
+        convergence["stoppedEarly"] = bool(last_session.get("iterationsLeft"))
+        convergence["session"] = last_session["file"]
+    kpis["convergence"] = convergence
     if transcripts.get("residuals"):
         reports["residuals"] = transcripts["residuals"]
     if transcripts.get("yPlus"):
@@ -340,6 +408,17 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
             "Wartości odniesienia w geometry.yaml różnią się od case'a (użyto case'a): "
             + "; ".join(reference_conflicts) + "."
         )
+    if convergence.get("settled") is False:
+        warnings.append(
+            "Siły jeszcze się nie ustabilizowały: " + "; ".join(convergence["reasons"])
+            + ". Nie porównuj tej symulacji z innymi na poziomie pojedynczych procentów."
+        )
+    if convergence.get("stoppedEarly"):
+        warnings.append(
+            f"Liczenie zatrzymane przed planem: {convergence.get('iterationsLeft')} iteracji z "
+            f"{convergence.get('plannedIterations') or '?'} nie zostało policzonych "
+            f"({convergence.get('session')})."
+        )
     if balance.get("frontPct") is None:
         warnings.append("Balans aero niepoliczony — brak: " + ", ".join(balance["missing"]) + ".")
     for session in (transcripts.get("sessions") or []):
@@ -349,6 +428,12 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         if session.get("divergence"):
             eqs = ", ".join(f"{eq} ×{n}" for eq, n in session["divergence"].items())
             warnings.append(f"Transcript {session['file']}: rozbieżność AMG ({eqs}).")
+        if session.get("scriptErrorCount"):
+            warnings.append(
+                f"Transcript {session['file']}: Fluent odrzucił {session['scriptErrorCount']} "
+                f"komend skryptu, np. „{session['scriptErrors'][0]}”. Sprawdź, czy ustawienia "
+                "weszły ręcznie."
+            )
         for item in session.get("wallMotionNormal") or []:
             warnings.append(
                 f"Transcript {session['file']}: ruch ściany ma dużą składową normalną na "
@@ -440,7 +525,11 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         },
         "methods": {
             "fluentVersion": transcripts.get("fluentVersion"),
-            "turbulence": transcripts.get("turbulenceHit"),
+            "turbulence": (setup.get("turbulence") or {}).get("model") or transcripts.get("turbulenceHit"),
+            "wallTreatment": (setup.get("turbulence") or {}).get("wallTreatment"),
+            "turbulenceSource": (
+                f"case:{setup['turbulence']['source']}" if setup.get("turbulence") else "transcript"
+            ),
             "mrfFan": transcripts.get("mrfFan"),
             "wheelRotation": setup.get("wheels") or None,
             "solverSessions": transcripts.get("sessions") or [],
@@ -449,6 +538,7 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         "mesh": {
             "cells": transcripts.get("cells"),
             "minOrthogonalQuality": transcripts.get("minOrthogonalQuality"),
+            "maxAspectRatio": transcripts.get("maxAspectRatio"),
             "hexcore": transcripts.get("hexcore"),
             "scopedPrisms": transcripts.get("scopedPrisms"),
             "prismStairstepLocations": transcripts.get("prismStairstepLocations"),

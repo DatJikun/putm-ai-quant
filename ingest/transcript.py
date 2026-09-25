@@ -10,6 +10,20 @@ ORTHO_RE = re.compile(
 ORTHO_WARN_RE = re.compile(
     r"minimum Orthogonal Quality of:\s+([0-9.]+)", re.I
 )
+ORTHO_SOLVER_RE = re.compile(
+    r"Minimum Orthogonal Quality =\s+([0-9.]+(?:[eE][+-]?\d+)?)", re.I
+)
+ASPECT_RE = re.compile(r"Maximum Aspect Ratio =\s+([0-9.]+(?:[eE][+-]?\d+)?)", re.I)
+PLANNED_ITER_RE = re.compile(
+    r'IntegerEntry\d+\(Number of Iterations\)"\s+(\d+)|/solve/iterate\s+(\d+)', re.I
+)
+ITER_LEFT_RE = re.compile(
+    r"^[ \t]*(\d+)[ \t]+[-+.\deE \t]+?[ \t]\d+:\d{2}:\d{2}[ \t]+(\d+)[ \t]*$", re.M
+)
+SCRIPT_ERROR_RE = re.compile(
+    r"^.*(?:unknown -- enter choice again|Error: eval: unbound variable|invalid command \[).*$",
+    re.M,
+)
 HEXCORE_RE = re.compile(r"octree hexcore", re.I)
 PRISM_RE = re.compile(r"scoped prisms", re.I)
 STAIRSTEP_RE = re.compile(
@@ -162,7 +176,14 @@ def _solver_health(text: str) -> dict:
     if MEMORY_RE.search(text):
         reasons.append("brak pamięci")
     crashed = fpe > 0 or bool(BAD_TERMINATION_RE.search(text) or SIGSEGV_RE.search(text))
+    planned = [int(m.group(1) or m.group(2)) for m in PLANNED_ITER_RE.finditer(text)]
+    rows = list(ITER_LEFT_RE.finditer(text))
+    script_errors = [" ".join(m.group(0).split())[:160] for m in SCRIPT_ERROR_RE.finditer(text)]
     return {
+        "plannedIterations": planned[-1] if planned else None,
+        "iterationsLeft": int(rows[-1].group(2)) if rows else None,
+        "scriptErrors": script_errors[:10],
+        "scriptErrorCount": len(script_errors),
         "crashed": crashed,
         "crashReasons": reasons if crashed else [],
         "floatingPointExceptions": fpe,
@@ -198,8 +219,15 @@ def parse_transcript(path: Path) -> dict:
     if cells:
         extracted["cells"] = max(cells)
 
+    solver_orthos = list(ORTHO_SOLVER_RE.finditer(text))
     orthos = [float(m.group(1)) for m in ORTHO_RE.finditer(text)]
-    if orthos:
+    if solver_orthos:
+        extracted["minOrthogonalQuality"] = float(solver_orthos[-1].group(1))
+        add("ortho", solver_orthos[-1])
+        aspects = list(ASPECT_RE.finditer(text))
+        if aspects:
+            extracted["maxAspectRatio"] = float(aspects[-1].group(1))
+    elif orthos:
         extracted["minOrthogonalQuality"] = orthos[-1]
         add("ortho", list(ORTHO_RE.finditer(text))[-1])
     else:
@@ -261,6 +289,18 @@ def parse_transcript(path: Path) -> dict:
     return extracted
 
 
+LATEST_WINS = {
+    "residuals",
+    "cells",
+    "minOrthogonalQuality",
+    "maxAspectRatio",
+    "symmetryFaces",
+    "inletFaces",
+    "turbulenceHit",
+    "fluentVersion",
+}
+
+
 def parse_transcripts(paths: list[Path]) -> dict:
     # fluent-YYYYMMDD-HHMMSS-PID.trn sorts by session start
     parsed = [parse_transcript(p) for p in sorted(paths, key=lambda p: p.name)]
@@ -278,17 +318,13 @@ def parse_transcripts(paths: list[Path]) -> dict:
         for key, value in item.items():
             if key in {"file", "hits", "solverHealth"}:
                 continue
-            if key == "residuals" and isinstance(value, dict):
-                previous = merged.get("residuals") or {}
-                if int(value.get("iteration") or 0) >= int(previous.get("iteration") or -1):
-                    merged["residuals"] = value
-                continue
             if key == "yPlus" and isinstance(value, dict):
                 merged["yPlus"] = _merge_yplus(merged.get("yPlus"), value)
                 continue
-            if key not in merged or merged[key] in (None, False):
+            # A later session re-reads or re-meshes the case, so its numbers replace earlier ones.
+            if key in LATEST_WINS and value is not None:
                 merged[key] = value
-            elif key == "cells" and isinstance(value, int):
-                merged[key] = max(int(merged[key]), value)
+            elif key not in merged or merged[key] in (None, False):
+                merged[key] = value
     merged["hits"] = merged["hits"][:120]
     return merged

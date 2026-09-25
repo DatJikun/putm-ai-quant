@@ -31,7 +31,10 @@ def _delta(new, old):
 
 
 def _cop_x(pack: dict):
-    """Metres from the moment reference. Positive means the downforce sits further back."""
+    """Metres along X. Positive shift means the downforce sits further back."""
+    balanced = _num(_dig(pack, "kpis", "aeroBalance", "copXM"))
+    if balanced is not None:
+        return balanced
     cm = _num(_dig(pack, "kpis", "cm"))
     cz = _num(_dig(pack, "kpis", "cz"))
     length = _num(_dig(pack, "kpis", "references", "referenceLengthM", "value"))
@@ -68,7 +71,8 @@ def diff_packs(baseline: dict, candidate: dict) -> dict:
         "opis": (
             "Różnice liczone tutaj, nie w głowie modelu. "
             "Dodatnia delta docisku to więcej docisku w drugiej paczce. "
-            "Środek parcia: cm * długość odniesienia / cz, w metrach od punktu momentu. "
+            "Środek parcia i balans z kpis.aeroBalance (cm przeniesione na osie kół), "
+            "więc paczki z różnym punktem momentu są porównywalne. "
             "Dodatnie przesunięcie znaczy, że docisk siadł bardziej z tyłu. "
             "Części są tylko te, które są w obu paczkach."
         ),
@@ -80,6 +84,10 @@ def diff_packs(baseline: dict, candidate: dict) -> dict:
         "srodek_parcia_baza_m": None if cop_old is None else round(cop_old, 4),
         "srodek_parcia_nowa_m": None if cop_new is None else round(cop_new, 4),
         "przesuniecie_srodka_parcia_m": _delta(cop_new, cop_old),
+        "delta_balans_przod_pp": _delta(
+            _dig(candidate, "kpis", "aeroBalance", "frontPct"),
+            _dig(baseline, "kpis", "aeroBalance", "frontPct"),
+        ),
         "komponenty": components,
     }
 
