@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
 
   const read: PackReader = async (file) => {
     try {
-      return JSON.parse(await fs.readFile(path.join(packDir, file), "utf-8"))
+      return await fs.readFile(path.join(packDir, file), "utf-8")
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
       throw err
@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
   try {
     const result = await answer(read, searchParams.get("tool") || "forces", {
       part: searchParams.get("part"),
+      device: searchParams.get("device"),
       axis: searchParams.get("axis"),
       station: searchParams.get("station"),
       field: searchParams.get("field"),

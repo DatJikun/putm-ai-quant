@@ -18,7 +18,7 @@ type Case = {
 function readerFor(folder: string): PackReader {
   return async (file) => {
     try {
-      return JSON.parse(await fs.readFile(path.join(folder, file), "utf-8"))
+      return await fs.readFile(path.join(folder, file), "utf-8")
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null
       throw err

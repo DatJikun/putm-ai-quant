@@ -13,6 +13,31 @@ def _read(path: Path) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _plain(value):
+    """JSON-safe copy of a YAML value. TBD and empty mean "not measured yet"."""
+    if value in ("TBD", ""):
+        return None
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _device_cards(pack_dir: Path) -> list[dict]:
+    path = pack_dir / "geometry.yaml"
+    if not path.exists():
+        raise FileNotFoundError("brak geometry.yaml (python -m ingest pack FOLDER_CASE --out packs/ID)")
+    import yaml
+
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    devices = doc.get("devices") if isinstance(doc, dict) else None
+    cards = [_plain(item) for item in devices or [] if isinstance(item, dict)]
+    return [card for card in cards if isinstance(card.get("id"), str) and card["id"]]
+
+
 def forces(pack_dir: Path) -> dict:
     pack = _read(pack_dir / "aeropack.json")
     if pack is None:
@@ -53,6 +78,24 @@ def part(pack_dir: Path, name: str) -> dict:
     raise FileNotFoundError(f"brak części {name}")
 
 
+def device(pack_dir: Path, name: str) -> dict:
+    """One geometry card. With no name, the ids to ask for."""
+    cards = _device_cards(pack_dir)
+    key = name.strip().lower()
+    if not key:
+        return {
+            "urzadzenia": [
+                {"id": card["id"], "group": card.get("group"), "role": card.get("role")}
+                for card in cards
+            ]
+        }
+    for card in cards:
+        if card["id"].lower() == key:
+            return card
+    ids = ", ".join(card["id"] for card in cards)
+    raise FileNotFoundError(f"brak urządzenia {name} (dostępne: {ids})")
+
+
 def slice_frame(pack_dir: Path, axis: str, station: float, field: str | None = None) -> dict:
     index = _read(pack_dir / "images" / "index.json")
     rows = (index or {}).get("index") or []
@@ -85,6 +128,8 @@ def answer(pack_dir: Path, tool: str, args: dict) -> dict:
         return forces(pack_dir)
     if tool in {"get_part", "part"}:
         return part(pack_dir, str(args.get("part") or args.get("name") or ""))
+    if tool in {"get_device", "device"}:
+        return device(pack_dir, str(args.get("device") or ""))
     if tool in {"get_slice", "slice"}:
         try:
             station = float(args.get("station") or args.get("station_m") or 0)

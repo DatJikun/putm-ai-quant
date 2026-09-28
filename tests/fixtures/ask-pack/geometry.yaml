@@ -1,0 +1,23 @@
+vehicle:
+  name: PM09
+devices:
+- id: fw-main
+  group: front-wing
+  role: mainplane
+  chordMm: 347.23
+  spanMm: 630
+  profile: null
+  le:
+    xMm: -885.95
+    zMm: 82.92
+  te:
+    xMm: -538.88
+    zMm: 72.24
+  notes: 'Przekrój Y=-315 mm: bez # kłopotu'
+  measured: true
+- group: orphan-without-id
+- id: rw-main
+  group: rear-wing
+  profile: TBD
+  chordMm: ''
+  le: { xMm: 1400, zMm: 700 }
