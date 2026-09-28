@@ -84,10 +84,11 @@ def main() -> None:
     brief = sub.add_parser("brief", help="Markdown dla chatbota z gotowego aeropack.json")
     brief.add_argument("pack_dir", type=Path)
 
-    ask = sub.add_parser("ask", help="Jedno pytanie do paczki: forces, part, slice")
+    ask = sub.add_parser("ask", help="Jedno pytanie do paczki: forces, part, device, slice")
     ask.add_argument("pack", type=Path)
     ask.add_argument("tool")
     ask.add_argument("--part")
+    ask.add_argument("--device", help="id karty z geometry.yaml; bez niego lista id")
     ask.add_argument("--axis", default="x")
     ask.add_argument("--station", type=float, default=0.0)
     ask.add_argument("--field")
@@ -166,7 +167,13 @@ def main() -> None:
         payload = answer(
             args.pack,
             args.tool,
-            {"part": args.part, "axis": args.axis, "station": args.station, "field": args.field},
+            {
+                "part": args.part,
+                "device": args.device,
+                "axis": args.axis,
+                "station": args.station,
+                "field": args.field,
+            },
         )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     elif args.cmd == "surfaces":

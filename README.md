@@ -47,7 +47,7 @@ putm-ai-quant/
 │   ├── pack.py             # Kompilator: aeropack.json + dla-chatbota.md
 │   ├── chatbot_brief.py    # Skrót paczki dla czatu bez narzędzi (dla-chatbota.md)
 │   ├── diff_pack.py        # Różnice dwóch paczek (model nie odejmuje sam)
-│   ├── ask.py              # Jedna odpowiedź z paczki: forces / part / slice
+│   ├── ask.py              # Jedna odpowiedź z paczki: forces / part / device / slice
 │   └── mcp_server.py       # Serwer MCP (stdio) nad ask.py
 ├── templates/              # Szablony
 │   ├── geometry.yaml       # Karty geometrii urządzeń aero (FW, RW, floor, etc.)
@@ -55,8 +55,10 @@ putm-ai-quant/
 ├── tests/                  # Testy (uruchamiane też w CI)
 │   ├── test_ingest.py      # pytest: parsery, balans, sumy kontrolne, brief
 │   ├── test_ask.py         # pytest: ask.py na wspólnych przypadkach
+│   ├── test_mcp_server.py  # pytest: serwer MCP jako prawdziwy proces (ramki, błędy, ping)
 │   ├── ask.test.ts         # node:test: src/lib/ask.ts na tych samych przypadkach
 │   ├── pack-path.test.ts   # node:test: walidacja id packa
+│   ├── geometry-yaml.test.ts # node:test: parser kart geometry.yaml
 │   ├── adapter-gaps.test.ts # node:test: adapter paczki pod UI
 │   └── fixtures/           # ask-pack/ (paczka + cases.json), ask-empty/
 ├── packs/                  # Wygenerowane paczki (w .gitignore, nie ma ich w repo)
@@ -68,6 +70,7 @@ putm-ai-quant/
     ├── app/api/ask/        # To samo co ask.py po HTTP (forces / part / slice)
     ├── lib/pack-adapter.ts # Adapter aeropack/v1 pod struktury UI
     ├── lib/ask.ts          # Port ingest/ask.py (wspólne przypadki testowe)
+    ├── lib/geometry-yaml.ts # Parser geometry.yaml (karty urządzeń, vehicle)
     ├── lib/pack-path.ts    # Walidacja id packa: tylko nazwa folderu pod packs/
     ├── lib/agent.ts        # Deterministyczny silnik oceny aero
     └── components/         # Workbench, CarSchematic, ContourPreview
@@ -117,7 +120,7 @@ Wszystkie operacje wywołuje się przez moduł `ingest` (`python -m ingest <pole
 | `pack ROOT [--out DIR]` | Składa pack: `aeropack.json`, `dla-chatbota.md`, `geometry.yaml`, `slices.yaml`, `inventory.json`, `images/index.json` | nic (`ocp` dla kart ze STEP) |
 | `dump-forces ROOT [--procs N] [--journal-only]` | Journal TUI i (opcjonalnie) headless Fluent zrzucający siły per strefa | `.cas.h5`, Ansys Fluent |
 | `brief PACK_DIR` | Odtwarza `dla-chatbota.md` z gotowego `aeropack.json` | `aeropack.json` |
-| `ask PACK forces\|part\|slice` | Jedna odpowiedź z paczki (`--part`, `--axis`, `--station`, `--field`) | `aeropack.json`, `profile.json`, `images/index.json` zależnie od pytania |
+| `ask PACK forces\|part\|device\|slice` | Jedna odpowiedź z paczki (`--part`, `--device`, `--axis`, `--station`, `--field`) | `aeropack.json`, `profile.json`, `geometry.yaml`, `images/index.json` zależnie od pytania |
 | `diff BASELINE.json CANDIDATE.json` | Różnice dwóch paczek (`ΔCd`, `ΔCl`, wspólne komponenty) do `quant/diff.json` | dwa `aeropack.json` |
 | `screens ROOT` | Kolory klatek CFD-Post na liczby (odczyt paska kolorów) do `quant/<case>/ekrany.json` | Pillow, klatki |
 | `grid ROOT --station M [--axis x] [--quantity cp]` | Rzadka siatka pola (`cp`, `p`, `u`, `v`, `w`, `speed`) na płaszczyźnie | `.cas.h5` + `.dat.h5` |
@@ -148,12 +151,13 @@ Narzędzie pomocnicze poza CLI: `python -m ingest.step_prep MODEL.STEP --out MOD
 
 ### Odpowiedzi na pytania agenta: `ask`, MCP i HTTP
 
-Agent nie dostaje całej paczki, tylko pyta o jedną rzecz. Trzy pytania są dostępne trzema drogami z tą samą logiką:
+Agent nie dostaje całej paczki, tylko pyta o jedną rzecz. Cztery pytania są dostępne trzema drogami z tą samą logiką:
 
 | Pytanie | MCP | HTTP (`/api/ask?id=<pack>&tool=...`) | CLI |
 |---|---|---|---|
 | Siły, docisk, moment, komponenty | `get_forces` | `tool=forces` | `ask PACK forces` |
 | Profil jednej części (`fw`, `rw`, `ut`) | `get_part` | `tool=part&part=rw` | `ask PACK part --part rw` |
+| Karta jednego urządzenia aero (profil, cięciwa, kąt, LE/TE). Bez `device` lista id | `get_device` | `tool=device&device=fw-main` | `ask PACK device --device fw-main` |
 | Klatka najbliższa stacji (nazwa pliku, nie piksele) | `get_slice` | `tool=slice&axis=x&station=0.7&field=cpt` | `ask PACK slice --axis x --station 0.7` |
 
 Serwer MCP (stdio) uruchamiasz z katalogu repo:
@@ -162,7 +166,7 @@ Serwer MCP (stdio) uruchamiasz z katalogu repo:
 python -m ingest.mcp_server packs/NAZWA_CASE
 ```
 
-`get_part` czyta `profile.json`, `get_slice` czyta `images/index.json`, a `get_forces` czyta `aeropack.json`. Brak pliku daje czytelny błąd z poleceniem, które go tworzy. Wersja TypeScript (`src/lib/ask.ts`) i Python (`ingest/ask.py`) muszą odpowiadać tak samo, dlatego oba testy czytają ten sam plik `tests/fixtures/ask-pack/cases.json`. Zmieniając jedną, zmień drugą.
+`get_part` czyta `profile.json`, `get_device` czyta `geometry.yaml`, `get_slice` czyta `images/index.json`, a `get_forces` czyta `aeropack.json`. Brak pliku daje czytelny błąd z poleceniem, które go tworzy. Wersja TypeScript (`src/lib/ask.ts`) i Python (`ingest/ask.py`) muszą odpowiadać tak samo, dlatego oba testy czytają ten sam plik `tests/fixtures/ask-pack/cases.json`. Zmieniając jedną, zmień drugą.
 
 ---
 

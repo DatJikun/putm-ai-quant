@@ -12,7 +12,16 @@ from pathlib import Path
 from ingest.ask import answer
 
 
+class _BadFrame(Exception):
+    """A frame the client sent wrongly. It gets an error reply; the server keeps running."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def _read_message() -> dict | None:
+    """Next message, or None once the client has closed the stream."""
     headers = {}
     while True:
         line = sys.stdin.buffer.readline()
@@ -20,13 +29,24 @@ def _read_message() -> dict | None:
             return None
         if line in (b"\r\n", b"\n"):
             break
-        key, _, value = line.decode("utf-8").partition(":")
+        key, _, value = line.decode("utf-8", "replace").partition(":")
         headers[key.strip().lower()] = value.strip()
-    length = int(headers.get("content-length", "0"))
-    if length <= 0:
-        return None
+    try:
+        length = int(headers.get("content-length", ""))
+    except ValueError:
+        raise _BadFrame(-32700, "brak albo zły nagłówek Content-Length") from None
+    if length < 0:
+        raise _BadFrame(-32700, "ujemny Content-Length")
     body = sys.stdin.buffer.read(length)
-    return json.loads(body.decode("utf-8"))
+    if len(body) < length:
+        return None
+    try:
+        message = json.loads(body.decode("utf-8"))
+    except ValueError as exc:
+        raise _BadFrame(-32700, f"zły JSON: {exc}") from None
+    if not isinstance(message, dict):
+        raise _BadFrame(-32600, "wiadomość musi być obiektem JSON")
+    return message
 
 
 def _write(payload: dict) -> None:
@@ -52,6 +72,17 @@ TOOLS = [
         },
     },
     {
+        "name": "get_device",
+        "description": (
+            "Karta jednego urządzenia aero z geometry.yaml: profil, cięciwa, rozpiętość, kąt, LE/TE. "
+            "Bez device zwraca listę dostępnych id."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"device": {"type": "string"}},
+        },
+    },
+    {
         "name": "get_slice",
         "description": "Jedna klatka najbliższa stacji. Zwraca nazwę pliku i części, nie piksele.",
         "inputSchema": {
@@ -70,7 +101,11 @@ TOOLS = [
 def main() -> None:
     pack = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path("packs")
     while True:
-        message = _read_message()
+        try:
+            message = _read_message()
+        except _BadFrame as exc:
+            _write({"jsonrpc": "2.0", "id": None, "error": {"code": exc.code, "message": str(exc)}})
+            continue
         if message is None:
             return
         method = message.get("method")
@@ -89,10 +124,14 @@ def main() -> None:
             )
         elif method == "notifications/initialized":
             continue
+        elif method == "ping":
+            _write({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         elif method == "tools/list":
             _write({"jsonrpc": "2.0", "id": msg_id, "result": {"tools": TOOLS}})
         elif method == "tools/call":
-            params = message.get("params") or {}
+            params = message.get("params")
+            if not isinstance(params, dict):
+                params = {}
             name = params.get("name")
             args = params.get("arguments") or {}
             try:
