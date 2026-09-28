@@ -83,7 +83,7 @@ Auto-transcript: `fluent-YYYYMMDD-HHMMSS-.trn` (Preferences → General → Auto
 
 ## 5. Warstwa 1 — skrypt zczytujący Fluent + siatkę + metody
 
-Cel: `ingest/fluent_case.py` → sekcja `solver`, `mesh`, `methods`, `monitors` w packu.
+Cel: sekcje `identity`, `methods`, `mesh`, `monitors` i `kpis` w packu. Zamiast jednego `fluent_case.py` (tak to pierwotnie planowaliśmy) robią to `transcript.py`, `setup_trace.py`, `cas_setup.py`, `wft_mesh.py`, `rfile.py`, `wall_forces.py` i `balance.py`, a składa je `pack.py`.
 
 ### 5.1 Priorytet źródeł (od najlepszego)
 
@@ -297,6 +297,16 @@ Nie jeden prompt z załącznikami.
 - `search_transcript(regex) → linie`
 - `get_device(id)` → karta geometrii
 
+**Stan realizacji.** Działają trzy pytania, dostępne przez serwer MCP (`python -m ingest.mcp_server PACK_DIR`), HTTP (`/api/ask`) i CLI (`python -m ingest ask`):
+
+| Pytanie w kodzie | Odpowiada planowi | Uwagi |
+|---|---|---|
+| `get_forces` | `get_component_force` (zbiorczo) | Cd, Cl, L/D, cm, cz i siły wszystkich grup naraz w `komponenty` |
+| `get_part` (`fw`, `rw`, `ut`) | częściowo `get_device` | Podsumowania Cp wzdłuż cięciwy z `profile.json`, nie karta geometrii |
+| `get_slice` | `get_frame` | Zwraca nazwę pliku najbliższej klatki i części na niej, nie piksele |
+
+Nie ma jeszcze: `search_transcript` i `get_device` (karty geometrii z `geometry.yaml`).
+
 **Werdykt:** `akceptowalne | warunkowo | do-poprawy | nieufne`  
 plus: zbieżność, siatka/y+/metody, L/D, balans, pokrycie klatek, pytania do inżyniera, kolejne runy.
 
@@ -358,10 +368,17 @@ Status poszczególnych modułów w kodzie:
 6. [x] **`ingest/pictures.py` i `ingest/slices.py`** — mapowanie klatek CFD-Post na stacje osi w metrach (-1.1 m do 2.5 m) + selekcja hero ramek do `images/index.json`.
 7. [x] **`ingest/cad_measure.py`** — moduł OpenCASCADE (`OCP`) do precyzyjnego cięcia profili ze STEP-a i wyznaczania cięciw, kątów AoA oraz współrzędnych LE/TE.
 8. [x] **`ingest/pack.py`** — główny kompilator składający `aeropack.json` zgodnie ze schematem `aeropack/v1`.
-9. [x] **Prompt + tools** — generowanie ustrukturyzowanego kontraktu dla agenta z wyselekcjonowanymi klatkami hero i zakazem interpretacji pikseli jako metrologii.
+9. [x] **Prompt + tools** — kontrakt dla agenta z wyselekcjonowanymi klatkami hero i zakazem interpretacji pikseli jako metrologii. Narzędzia: 3 z 4 planowanych w wersji zbiorczej (patrz sekcja 8).
 10. [x] **UI & API Next.js** (`src/app/api/packs/`, `src/lib/pack-adapter.ts`, `src/components/workbench.tsx`) — dynamiczne ładowanie lokalnych packów z dysku, obsługa `BASELINEiter002` bolidu PM09, podgląd kart geometrii i diagnostyki solvera.
 
-Język skryptów: **Python 3.11+**. Testy: `tests/test_ingest.py` (9/9 zaliczonych).
+Dodane po pierwszej wersji:
+
+11. [x] **`ingest/balance.py`** — balans przód/tył z momentu solvera (`cm`, punkt i oś momentu, oś obrotu kół z case'a). Nie z udziału FW/RW.
+12. [x] **`ingest/setup_trace.py`, `wft_mesh.py`, rozszerzony `transcript.py` i `rfile.py`** — ustawienia z transcriptu, warstwy przyścienne z `.wft`, przerwane sesje solvera, dryf sił w ostatnim oknie i wczesne zatrzymanie.
+13. [x] **Analiza pól** — `field_grid.py` (siatka pola, ślad za skrzydłem), `surface_field.py` (mapy Cp, y+ i tarcia, profile), `screen_quant.py` (liczby z paska kolorów klatek), `car_layout.py` i `step_cards.py` (stacje i karty z geometrii case'a). Komendy: `grid`, `wake`, `surfaces`, `profiles`, `screens`.
+14. [x] **`ingest/diff_pack.py`, `chatbot_brief.py`, `ask.py`, `mcp_server.py`** — porównanie dwóch runów, skrót paczki dla czatu bez narzędzi (`dla-chatbota.md`), odpowiedzi na pojedyncze pytania i serwer MCP.
+
+Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`) i `npm test` (adapter, `ask`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
 
 ---
 
@@ -395,12 +412,13 @@ Język skryptów: **Python 3.11+**. Testy: `tests/test_ingest.py` (9/9 zaliczony
 ## 13. Co już jest w tym repo
 
 - **Lokalny pipeline Ingest (`ingest/`)**: w pełni funkcjonalny parser Fluenta, CAD i klatek. Złożył gotowy pack `BASELINEiter002` (bolid PM09, 11.3 mln komórek, 1840 iteracji, podział strefowy).
-- **Zestaw testów (`tests/test_ingest.py`)**: 9 testów w pytest pokrywających transcripty, monitory, wektory sił, sumy kontrolne i mapowanie przekrojów.
+- **Zestaw testów**: pytest (`tests/test_ingest.py`, `tests/test_ask.py`) pokrywa transcripty, monitory, wektory sił, sumy kontrolne, balans, brief i `ask`. `npm test` pokrywa adapter, `ask` po stronie TS i walidację id packa. Oba `ask` czytają te same przypadki (`tests/fixtures/ask-pack/cases.json`). Wszystko biegnie w CI. Testy używają danych syntetycznych, bo `packs/` jest w `.gitignore` i prawdziwy case nie jest w repo.
 - **Frontend Next.js 16 (`src/`)**: 
   - Dynamiczny warsztat podłączony pod `/api/packs`.
   - Przełącznik case'ów (lokalne z `packs/`, syntetyczny demo FS-26, wgrywanie JSON).
   - Tabela kart parametrycznych geometrii ze STEP/YAML.
   - Silnik oceniania według twardych kryteriów FSAE.
+- **Odpowiedzi na pytania agenta**: `ask` (CLI), serwer MCP (`ingest/mcp_server.py`), `/api/ask` i `dla-chatbota.md` dla czatu bez narzędzi.
 
 ---
 

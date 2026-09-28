@@ -42,8 +42,30 @@ export type AdaptedPack = {
   devices: AeroDevice[]
   reynolds: number | null
   dataGaps: string[]
-  rawPack: any
+  forceConvention: string | null
+  rawPack: Record<string, unknown>
   prompt: string
+}
+
+type Rec = Record<string, unknown>
+
+const AXES: readonly Axis[] = ["full", "x", "y", "z"]
+
+function rec(value: unknown): Rec {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Rec) : {}
+}
+
+function list(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function strList(value: unknown): string[] {
+  return list(value).filter((item): item is string => typeof item === "string")
+}
+
+function str(value: unknown): string | null {
+  if (typeof value === "string") return value === "" ? null : value
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : null
 }
 
 function num(value: unknown): number | null {
@@ -97,7 +119,7 @@ function mapRegion(axis: Axis, stationM: number | null, filename: string): Regio
   return "full-car"
 }
 
-function mapField(fieldStr?: string): FieldId {
+function mapField(fieldStr?: string | null): FieldId {
   if (!fieldStr) return "cpt"
   const low = fieldStr.toLowerCase()
   if (low.includes("yplus") || low.includes("y_plus") || low.includes("y+")) return "yplus"
@@ -139,7 +161,7 @@ export function parseGeometryYaml(yamlStr?: string): AeroDevice[] {
   const devices: AeroDevice[] = []
   const lines = yamlStr.split(/\r?\n/)
   let inDevices = false
-  let current: any = null
+  let current: Rec | null = null
 
   for (const line of lines) {
     if (/^devices:\s*$/.test(line)) {
@@ -147,7 +169,7 @@ export function parseGeometryYaml(yamlStr?: string): AeroDevice[] {
       continue
     }
     if (inDevices && /^[a-zA-Z0-9_-]+:/.test(line) && !line.startsWith(" ")) {
-      if (current?.id) devices.push(current)
+      if (current?.id) devices.push(current as AeroDevice)
       current = null
       inDevices = false
       continue
@@ -156,7 +178,7 @@ export function parseGeometryYaml(yamlStr?: string): AeroDevice[] {
 
     const itemMatch = line.match(/^\s*-\s+id:\s*([^\s#]+)/)
     if (itemMatch) {
-      if (current?.id) devices.push(current)
+      if (current?.id) devices.push(current as AeroDevice)
       current = { id: itemMatch[1] }
       continue
     }
@@ -165,18 +187,19 @@ export function parseGeometryYaml(yamlStr?: string): AeroDevice[] {
       const propMatch = line.match(/^\s*([a-zA-Z0-9_]+):\s*(.*)$/)
       if (propMatch) {
         const key = propMatch[1]
-        let val: any = propMatch[2].trim()
-        if (val.includes("#") && !val.startsWith('"')) {
-          val = val.split("#")[0].trim()
+        let text = propMatch[2].trim()
+        if (text.includes("#") && !text.startsWith('"')) {
+          text = text.split("#")[0].trim()
         }
-        if (val.startsWith('"') && val.endsWith('"')) {
-          val = val.slice(1, -1)
+        if (text.startsWith('"') && text.endsWith('"')) {
+          text = text.slice(1, -1)
         }
-        if (val === "null" || val === "TBD") val = null
-        else if (!isNaN(Number(val)) && val !== "") val = Number(val)
-        else if (val.startsWith("{") && val.endsWith("}")) {
+        let val: unknown = text
+        if (text === "null" || text === "TBD") val = null
+        else if (!isNaN(Number(text)) && text !== "") val = Number(text)
+        else if (text.startsWith("{") && text.endsWith("}")) {
           try {
-            const jsonLike = val.replace(/([a-zA-Z0-9_]+):/g, '"$1":')
+            const jsonLike = text.replace(/([a-zA-Z0-9_]+):/g, '"$1":')
             val = JSON.parse(jsonLike)
           } catch {
             // keep string
@@ -186,7 +209,7 @@ export function parseGeometryYaml(yamlStr?: string): AeroDevice[] {
       }
     }
   }
-  if (current?.id) devices.push(current)
+  if (current?.id) devices.push(current as AeroDevice)
   return devices
 }
 
@@ -200,43 +223,43 @@ export function calcReynolds(
 }
 
 export function adaptAeropack(
-  raw: any,
-  rawImagesList?: any[],
+  rawInput: unknown,
+  rawImagesList?: unknown[],
   geometryYamlStr?: string,
 ): AdaptedPack {
-  const identity = raw.identity || {}
-  const methods = raw.methods || {}
-  const mesh = raw.mesh || {}
-  const monitors = raw.monitors || {}
-  const kpisRaw = raw.kpis || {}
-  const files = raw.files || {}
-  const warnings: string[] = Array.isArray(raw.warnings) ? [...raw.warnings] : []
-  const notesForAgent: string[] = Array.isArray(raw.notesForAgent)
-    ? [...raw.notesForAgent]
-    : []
+  const raw = rec(rawInput)
+  const identity = rec(raw.identity)
+  const methods = rec(raw.methods)
+  const mesh = rec(raw.mesh)
+  const monitors = rec(raw.monitors)
+  const kpisRaw = rec(raw.kpis)
+  const files = rec(raw.files)
+  const warnings = strList(raw.warnings)
+  const notesForAgent = strList(raw.notesForAgent)
 
-  const caseId = identity.caseId || "unnamed-case"
+  const caseId = str(identity.caseId) ?? "unnamed-case"
   const vehicleYaml = parseVehicleYaml(geometryYamlStr)
   const vehicleName =
     (typeof identity.vehicle === "string" && identity.vehicle) ||
     (typeof vehicleYaml.name === "string" && vehicleYaml.name) ||
     "nieznany bolid"
+  const yawDeg = num(identity.yawDeg) ?? 0
   const speedMs = num(identity.speedMs) ?? num(kpisRaw.speedMs)
   const rho = num(kpisRaw.rho)
-  const mu = num(kpisRaw.references?.mu?.value) ?? num(kpisRaw.mu)
+  const mu = num(rec(rec(kpisRaw.references).mu).value) ?? num(kpisRaw.mu)
   const halfModel = Boolean(identity.halfModel)
   const frontalArea = num(kpisRaw.frontalAreaM2) ?? num(vehicleYaml.frontalAreaM2)
   const wheelbaseMm = num(vehicleYaml.wheelbaseMm)
   const wheelbaseM = wheelbaseMm == null ? null : wheelbaseMm / 1000
   const dataGaps: string[] = []
 
-  const casFiles = Array.isArray(files.cas) ? files.cas : []
-  const datFiles = Array.isArray(files.dat) ? files.dat : []
+  const casFiles = strList(files.cas)
+  const datFiles = strList(files.dat)
   const cellsCount = num(mesh.cells)
   const cellsM = cellsCount == null ? null : +(cellsCount / 1e6).toFixed(2)
   const iterations = num(monitors.iterations) ?? num(kpisRaw.iterations)
 
-  const rawResids = monitors.residuals || monitors.monitors?.residuals || {}
+  const rawResids = rec(monitors.residuals ?? rec(monitors.monitors).residuals)
   const residuals = {
     continuity: num(rawResids.continuity),
     xMomentum: num(rawResids.xMomentum) ?? num(rawResids.x_velocity),
@@ -245,7 +268,7 @@ export function adaptAeropack(
     k: num(rawResids.k),
     omega: num(rawResids.omega),
   }
-  const yPlusBlock = monitors.yPlus || {}
+  const yPlusBlock = rec(monitors.yPlus)
   const yPlusWings = readYPlus(yPlusBlock.wings)
   const yPlusFloor = readYPlus(yPlusBlock.floor)
 
@@ -256,15 +279,20 @@ export function adaptAeropack(
   if (speedMs == null) dataGaps.push("Brak V∞.")
   if (frontalArea == null) dataGaps.push("Brak Aref.")
 
+  const fluentVersion = str(methods.fluentVersion)
+  const wheelRotation = rec(methods.wheelRotation)
+  const solverSessions = list(methods.solverSessions).map(rec)
+  const convergence = rec(kpisRaw.convergence)
+
   const fluentCase: FluentCase = {
     id: caseId,
     name: `${vehicleName} · ${caseId} (${halfModel ? "half-model yaw 0°" : "full car"})`,
     casFile: casFiles[0] || "brak .cas",
     datFile: datFiles[0] || "brak .dat",
-    solver: `${methods.fluentVersion ? "Fluent " + methods.fluentVersion : "Fluent (wersja nieodczytana)"}, ${
+    solver: `${fluentVersion ? "Fluent " + fluentVersion : "Fluent (wersja nieodczytana)"}, ${
       halfModel ? "pół bolidu (symetria)" : "pełny bolid"
-    }, yaw ${identity.yawDeg ?? 0}°`,
-    turbulence: methods.turbulence || "nieodczytany",
+    }, yaw ${yawDeg}°`,
+    turbulence: str(methods.turbulence) ?? "nieodczytany",
     wallTreatment: mesh.scopedPrisms
       ? "scoped prisms (meshing)"
       : mesh.prismStairstepLocations != null
@@ -272,7 +300,7 @@ export function adaptAeropack(
       : "nieodczytana",
     cellsM,
     speedMs,
-    yawDeg: Number(identity.yawDeg || 0),
+    yawDeg,
     rho,
     mu,
     referenceAreaM2: frontalArea,
@@ -283,20 +311,21 @@ export function adaptAeropack(
     yPlusFloor,
     minOrthogonalQuality: num(mesh.minOrthogonalQuality),
     mrfFan: Boolean(methods.mrfFan),
-    wheelsRotate: methods.wheelRotation ? Boolean(methods.wheelRotation.front && methods.wheelRotation.rear) : null,
-    solverCrashes: (Array.isArray(methods.solverSessions) ? methods.solverSessions : [])
-      .filter((session: { crashed?: boolean }) => session.crashed)
-      .map((session: { file?: string; crashReasons?: string[] }) =>
-        `${session.file}: ${(session.crashReasons || []).join(", ") || "BAD TERMINATION"}`,
+    wheelsRotate: methods.wheelRotation ? Boolean(wheelRotation.front && wheelRotation.rear) : null,
+    solverCrashes: solverSessions
+      .filter((session) => session.crashed)
+      .map(
+        (session) =>
+          `${str(session.file) ?? "sesja"}: ${strList(session.crashReasons).join(", ") || "BAD TERMINATION"}`,
       ),
-    solverSessionCount: Array.isArray(methods.solverSessions) ? methods.solverSessions.length : 0,
-    forcesSettled: typeof kpisRaw.convergence?.settled === "boolean" ? kpisRaw.convergence.settled : null,
-    forceDriftReasons: Array.isArray(kpisRaw.convergence?.reasons) ? kpisRaw.convergence.reasons : [],
-    iterationsLeft: num(kpisRaw.convergence?.iterationsLeft),
-    plannedIterations: num(kpisRaw.convergence?.plannedIterations),
+    solverSessionCount: solverSessions.length,
+    forcesSettled: typeof convergence.settled === "boolean" ? convergence.settled : null,
+    forceDriftReasons: strList(convergence.reasons),
+    iterationsLeft: num(convergence.iterationsLeft),
+    plannedIterations: num(convergence.plannedIterations),
   }
 
-  const compGroups = kpisRaw.components?.groups || {}
+  const compGroups = rec(rec(kpisRaw.components).groups)
   const components: ComponentForce[] = []
   const groupNameLabels: Record<string, string> = {
     fw: "Front Wing",
@@ -307,7 +336,8 @@ export function adaptAeropack(
     cooling: "Cooling + Fan",
   }
 
-  for (const [key, val] of Object.entries<any>(compGroups)) {
+  for (const [key, group] of Object.entries(compGroups)) {
+    const val = rec(group)
     const shareDownforce = num(val.shareDownforcePct)
     const shareDrag = num(val.shareDragPct)
     components.push({
@@ -332,7 +362,7 @@ export function adaptAeropack(
     num(kpisRaw.LOverD) ??
     (cdVal != null && downforceCoeff != null && cdVal !== 0 ? downforceCoeff / cdVal : null)
 
-  const balanceRaw = kpisRaw.aeroBalance || {}
+  const balanceRaw = rec(kpisRaw.aeroBalance)
   const frontBalancePct = num(balanceRaw.frontPct)
   const balanceAxles =
     frontBalancePct == null
@@ -341,7 +371,7 @@ export function adaptAeropack(
   if (cdVal == null) dataGaps.push("Brak Cd.")
   if (clVal == null) dataGaps.push("Brak Cl.")
   if (frontBalancePct == null) {
-    const missing: string[] = Array.isArray(balanceRaw.missing) ? balanceRaw.missing : []
+    const missing = strList(balanceRaw.missing)
     dataGaps.push(
       missing.length
         ? `Brak balansu przód/tył: ${missing.join(", ")}.`
@@ -364,7 +394,7 @@ export function adaptAeropack(
     components,
   }
 
-  const cadFiles = Array.isArray(files.cad) ? files.cad : []
+  const cadFiles = strList(files.cad)
   const cadModel: CadModel = {
     name: cadFiles[0] || (typeof vehicleYaml.name === "string" ? `${vehicleYaml.name}.STEP` : "brak CAD"),
     format: "STEP",
@@ -385,40 +415,40 @@ export function adaptAeropack(
   }
 
   // Images mapping
-  const sourceImages = Array.isArray(rawImagesList) && rawImagesList.length > 0
-    ? rawImagesList
-    : Array.isArray(raw.images?.hero) && raw.images.hero.length > 0
-    ? raw.images.hero
-    : []
+  const heroFrames = list(rec(raw.images).hero)
+  const sourceImages = Array.isArray(rawImagesList) && rawImagesList.length > 0 ? rawImagesList : heroFrames
 
-  const images: PostImage[] = sourceImages.map((img: any, idx: number) => {
-    const axis: Axis = (["full", "x", "y", "z"].includes(img.axis) ? img.axis : "full") as Axis
-    const field: FieldId = mapField(img.field)
-    const filename = img.filename || img.id || `frame_${idx}.png`
-    const stationM = img.stationM != null ? Number(img.stationM) : null
-    const region: RegionId = img.region ? (img.region as RegionId) : mapRegion(axis, stationM, filename)
+  const images: PostImage[] = sourceImages.map((frame, idx) => {
+    const img = rec(frame)
+    const axisRaw = str(img.axis)
+    const axis: Axis = AXES.find((candidate) => candidate === axisRaw) ?? "full"
+    const field: FieldId = mapField(str(img.field))
+    const filename = str(img.filename) ?? str(img.id) ?? `frame_${idx}.png`
+    const stationM = num(img.stationM)
+    const regionRaw = str(img.region)
+    const region: RegionId = regionRaw ? (regionRaw as RegionId) : mapRegion(axis, stationM, filename)
     const hero = Boolean(img.hero)
 
     return {
-      id: img.id || filename,
+      id: str(img.id) ?? filename,
       filename,
       axis,
       field,
       stationM,
-      camera: img.camera || axis,
+      camera: str(img.camera) ?? axis,
       zoom: "full",
       region,
       hero,
       component: typeof img.component === "string" ? img.component : undefined,
       feature: typeof img.feature === "string" ? img.feature : undefined,
-      reason: img.reason || (hero ? "Hero klatka stacji kluczowej" : undefined),
+      reason: str(img.reason) ?? (hero ? "Hero klatka stacji kluczowej" : undefined),
     }
   })
 
   // Devices
-  let devices: AeroDevice[] = Array.isArray(raw.geometry?.devices)
-    ? raw.geometry.devices
-    : []
+  let devices = list(rec(raw.geometry).devices).filter(
+    (device): device is AeroDevice => typeof rec(device).id === "string",
+  )
   if (devices.length === 0 && geometryYamlStr) {
     devices = parseGeometryYaml(geometryYamlStr)
   }
@@ -430,16 +460,18 @@ export function adaptAeropack(
   }))
   const review = evaluateCase(fluentCase, kpis, cadModel, images, reviewDevices)
 
-  const checksum = kpisRaw.components?.checksum || kpisRaw.checksum
-  if (checksum?.ok && num(checksum.cdRelErr) != null && num(checksum.clRelErr) != null) {
+  const checksum = rec(rec(kpisRaw.components).checksum || kpisRaw.checksum)
+  const cdRelErr = num(checksum.cdRelErr)
+  const clRelErr = num(checksum.clRelErr)
+  if (checksum.ok && cdRelErr != null && clRelErr != null) {
     review.findings.push({
       id: "force-checksum",
       severity: "info",
       title: "Suma sił stref jest spójna z globalnymi współczynnikami",
-      evidence: `Błąd względny Cd: ${((checksum.cdRelErr as number) * 100).toFixed(3)}%, błąd Cl: ${((checksum.clRelErr as number) * 100).toFixed(3)}% (poniżej tolerancji 1%).`,
+      evidence: `Błąd względny Cd: ${(cdRelErr * 100).toFixed(3)}%, błąd Cl: ${(clRelErr * 100).toFixed(3)}% (poniżej tolerancji 1%).`,
       recommendation: "Podział sił na komponenty jest zbilansowany numerycznie.",
     })
-  } else if (checksum && checksum.ok === false) {
+  } else if (checksum.ok === false) {
     review.findings.push({
       id: "force-checksum",
       severity: "issue",
@@ -504,6 +536,7 @@ export function adaptAeropack(
     devices,
     reynolds: reynoldsVal,
     dataGaps,
+    forceConvention: str(kpisRaw.forceConvention),
     rawPack: raw,
     prompt,
   }

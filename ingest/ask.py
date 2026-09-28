@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 
@@ -30,10 +31,12 @@ def forces(pack_dir: Path) -> dict:
 
 
 def part(pack_dir: Path, name: str) -> dict:
+    key = name.strip().lower()
+    if not key:
+        raise ValueError("brak nazwy części")
     doc = _read(pack_dir / "profile.json")
     if doc is None:
-        raise FileNotFoundError("brak profile.json")
-    key = name.lower()
+        raise FileNotFoundError("brak profile.json (python -m ingest profiles FOLDER_CASE --out packs/ID/profile.json)")
     for wing in doc.get("skrzydla") or []:
         if wing.get("id") != key and key not in str(wing.get("nazwa", "")).lower():
             continue
@@ -41,8 +44,8 @@ def part(pack_dir: Path, name: str) -> dict:
         for cut in wing.get("przekroje") or []:
             item = {"y_m": cut.get("y_m")}
             if "dol" in cut:
-                item["dol"] = cut["dol"].get("podsumowanie")
-                item["gora"] = cut["gora"].get("podsumowanie")
+                item["dol"] = (cut.get("dol") or {}).get("podsumowanie")
+                item["gora"] = (cut.get("gora") or {}).get("podsumowanie")
             else:
                 item["podsumowanie"] = cut.get("podsumowanie")
             cuts.append(item)
@@ -83,10 +86,11 @@ def answer(pack_dir: Path, tool: str, args: dict) -> dict:
     if tool in {"get_part", "part"}:
         return part(pack_dir, str(args.get("part") or args.get("name") or ""))
     if tool in {"get_slice", "slice"}:
-        return slice_frame(
-            pack_dir,
-            str(args.get("axis") or "x"),
-            float(args.get("station") or args.get("station_m") or 0),
-            args.get("field"),
-        )
+        try:
+            station = float(args.get("station") or args.get("station_m") or 0)
+        except (TypeError, ValueError):
+            station = math.nan
+        if not math.isfinite(station):
+            raise ValueError("station musi być liczbą")
+        return slice_frame(pack_dir, str(args.get("axis") or "x"), station, args.get("field"))
     raise ValueError(f"nieznane pytanie: {tool}")

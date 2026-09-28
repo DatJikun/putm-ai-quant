@@ -1,0 +1,24 @@
+{
+  "skrzydla": [
+    {
+      "id": "fw",
+      "nazwa": "Front wing",
+      "przekroje": [
+        { "y_m": 0.1, "dol": { "podsumowanie": "ssanie na 30% cięciwy" }, "gora": { "podsumowanie": "łagodny nacisk" } },
+        { "y_m": 0.3, "podsumowanie": "płaski rozkład" }
+      ]
+    },
+    {
+      "id": "rw",
+      "nazwa": "Rear wing",
+      "przekroje": [
+        { "y_m": 0.2, "dol": { "podsumowanie": "odklejenie za 70%" }, "gora": { "podsumowanie": "ssanie na 20%" } }
+      ]
+    },
+    {
+      "id": "ut",
+      "nazwa": "Underfloor tray",
+      "przekroje": [{ "y_m": 0.2, "dol": { "podsumowanie": "tylko dół" } }]
+    }
+  ]
+}

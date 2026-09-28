@@ -59,7 +59,10 @@ def main() -> None:
     surf.add_argument("--pitch", type=float, default=0.01)
     surf.add_argument("--out", type=Path)
 
-    prof = sub.add_parser("profiles", help="Cp wzdłuż cięciwy na FW, RW i podłodze")
+    prof = sub.add_parser(
+        "profiles",
+        help="Cp wzdłuż cięciwy na FW, RW i podłodze (domyślnie do packs/<case>/profile.json, skąd czyta go ask)",
+    )
     prof.add_argument("root", type=Path)
     prof.add_argument("--out", type=Path)
 
@@ -175,7 +178,7 @@ def main() -> None:
         ]
         print(json.dumps({"out": str(out), "powierzchnie": summary}, ensure_ascii=False, indent=2))
     elif args.cmd == "profiles":
-        out = args.out or Path("quant") / args.root.name / "profile.json"
+        out = args.out or Path("packs") / args.root.name / "profile.json"
         data = write_profiles(args.root, out)
         brief = []
         for wing in data["skrzydla"]:
