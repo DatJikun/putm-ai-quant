@@ -1,4 +1,5 @@
 import { evaluateCase, type ReviewDevice } from "./agent"
+import { parseGeometryYaml, parseVehicleYaml, type AeroDevice } from "./geometry-yaml"
 import type {
   AeroKpis,
   AgentReview,
@@ -11,22 +12,7 @@ import type {
   RegionId,
 } from "./types"
 
-export type AeroDevice = {
-  id: string
-  group?: string
-  role?: string
-  cadName?: string
-  profile?: string
-  chordMm?: number | null
-  spanMm?: number | null
-  incidenceDeg?: number | null
-  twistDeg?: number | null
-  slotGapMm?: number | null
-  overlapMm?: number | null
-  le?: { xMm: number; zMm: number }
-  te?: { xMm: number; zMm: number }
-  notes?: string
-}
+export { parseGeometryYaml, parseVehicleYaml, type AeroDevice }
 
 export type AdaptedPack = {
   id: string
@@ -130,87 +116,6 @@ function mapField(fieldStr?: string | null): FieldId {
   if (low.includes("tke")) return "tke"
   if (low.includes("helicity")) return "helicity"
   return "cpt"
-}
-
-export function parseVehicleYaml(yamlStr?: string): Record<string, string | number | null> {
-  if (!yamlStr) return {}
-  const lines = yamlStr.split(/\r?\n/)
-  let inVehicle = false
-  const vehicle: Record<string, string | number | null> = {}
-  for (const line of lines) {
-    if (/^vehicle:\s*$/.test(line)) {
-      inVehicle = true
-      continue
-    }
-    if (inVehicle && /^[a-zA-Z]/.test(line)) break
-    if (!inVehicle) continue
-    const propMatch = line.match(/^\s+([a-zA-Z0-9_]+):\s*(.*)$/)
-    if (!propMatch) continue
-    let val = propMatch[2].trim()
-    if (val.includes("#") && !val.startsWith('"')) val = val.split("#")[0].trim()
-    if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1)
-    if (val === "null" || val === "TBD" || val === "") vehicle[propMatch[1]] = null
-    else if (!Number.isNaN(Number(val))) vehicle[propMatch[1]] = Number(val)
-    else vehicle[propMatch[1]] = val
-  }
-  return vehicle
-}
-
-export function parseGeometryYaml(yamlStr?: string): AeroDevice[] {
-  if (!yamlStr) return []
-  const devices: AeroDevice[] = []
-  const lines = yamlStr.split(/\r?\n/)
-  let inDevices = false
-  let current: Rec | null = null
-
-  for (const line of lines) {
-    if (/^devices:\s*$/.test(line)) {
-      inDevices = true
-      continue
-    }
-    if (inDevices && /^[a-zA-Z0-9_-]+:/.test(line) && !line.startsWith(" ")) {
-      if (current?.id) devices.push(current as AeroDevice)
-      current = null
-      inDevices = false
-      continue
-    }
-    if (!inDevices) continue
-
-    const itemMatch = line.match(/^\s*-\s+id:\s*([^\s#]+)/)
-    if (itemMatch) {
-      if (current?.id) devices.push(current as AeroDevice)
-      current = { id: itemMatch[1] }
-      continue
-    }
-
-    if (current) {
-      const propMatch = line.match(/^\s*([a-zA-Z0-9_]+):\s*(.*)$/)
-      if (propMatch) {
-        const key = propMatch[1]
-        let text = propMatch[2].trim()
-        if (text.includes("#") && !text.startsWith('"')) {
-          text = text.split("#")[0].trim()
-        }
-        if (text.startsWith('"') && text.endsWith('"')) {
-          text = text.slice(1, -1)
-        }
-        let val: unknown = text
-        if (text === "null" || text === "TBD") val = null
-        else if (!isNaN(Number(text)) && text !== "") val = Number(text)
-        else if (text.startsWith("{") && text.endsWith("}")) {
-          try {
-            const jsonLike = text.replace(/([a-zA-Z0-9_]+):/g, '"$1":')
-            val = JSON.parse(jsonLike)
-          } catch {
-            // keep string
-          }
-        }
-        current[key] = val
-      }
-    }
-  }
-  if (current?.id) devices.push(current as AeroDevice)
-  return devices
 }
 
 export function calcReynolds(
