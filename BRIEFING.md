@@ -297,15 +297,16 @@ Nie jeden prompt z załącznikami.
 - `search_transcript(regex) → linie`
 - `get_device(id)` → karta geometrii
 
-**Stan realizacji.** Działają trzy pytania, dostępne przez serwer MCP (`python -m ingest.mcp_server PACK_DIR`), HTTP (`/api/ask`) i CLI (`python -m ingest ask`):
+**Stan realizacji.** Działają cztery pytania, dostępne przez serwer MCP (`python -m ingest.mcp_server PACK_DIR`), HTTP (`/api/ask`) i CLI (`python -m ingest ask`):
 
 | Pytanie w kodzie | Odpowiada planowi | Uwagi |
 |---|---|---|
 | `get_forces` | `get_component_force` (zbiorczo) | Cd, Cl, L/D, cm, cz i siły wszystkich grup naraz w `komponenty` |
-| `get_part` (`fw`, `rw`, `ut`) | częściowo `get_device` | Podsumowania Cp wzdłuż cięciwy z `profile.json`, nie karta geometrii |
+| `get_part` (`fw`, `rw`, `ut`) | uzupełnia `get_device` | Podsumowania Cp wzdłuż cięciwy z `profile.json`, nie karta geometrii |
+| `get_device` | `get_device(id)` | Karta z `geometry.yaml` (profil, cięciwa, rozpiętość, kąt, LE/TE). Bez `device` zwraca listę id. Wartości `TBD` to `null` |
 | `get_slice` | `get_frame` | Zwraca nazwę pliku najbliższej klatki i części na niej, nie piksele |
 
-Nie ma jeszcze: `search_transcript` i `get_device` (karty geometrii z `geometry.yaml`).
+Nie ma jeszcze: `search_transcript`.
 
 **Werdykt:** `akceptowalne | warunkowo | do-poprawy | nieufne`  
 plus: zbieżność, siatka/y+/metody, L/D, balans, pokrycie klatek, pytania do inżyniera, kolejne runy.
@@ -378,7 +379,7 @@ Dodane po pierwszej wersji:
 13. [x] **Analiza pól** — `field_grid.py` (siatka pola, ślad za skrzydłem), `surface_field.py` (mapy Cp, y+ i tarcia, profile), `screen_quant.py` (liczby z paska kolorów klatek), `car_layout.py` i `step_cards.py` (stacje i karty z geometrii case'a). Komendy: `grid`, `wake`, `surfaces`, `profiles`, `screens`.
 14. [x] **`ingest/diff_pack.py`, `chatbot_brief.py`, `ask.py`, `mcp_server.py`** — porównanie dwóch runów, skrót paczki dla czatu bez narzędzi (`dla-chatbota.md`), odpowiedzi na pojedyncze pytania i serwer MCP.
 
-Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`) i `npm test` (adapter, `ask`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
+Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) i `npm test` (adapter, `ask`, parser `geometry.yaml`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
 
 ---
 
@@ -412,7 +413,7 @@ Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_inges
 ## 13. Co już jest w tym repo
 
 - **Lokalny pipeline Ingest (`ingest/`)**: w pełni funkcjonalny parser Fluenta, CAD i klatek. Złożył gotowy pack `BASELINEiter002` (bolid PM09, 11.3 mln komórek, 1840 iteracji, podział strefowy).
-- **Zestaw testów**: pytest (`tests/test_ingest.py`, `tests/test_ask.py`) pokrywa transcripty, monitory, wektory sił, sumy kontrolne, balans, brief i `ask`. `npm test` pokrywa adapter, `ask` po stronie TS i walidację id packa. Oba `ask` czytają te same przypadki (`tests/fixtures/ask-pack/cases.json`). Wszystko biegnie w CI. Testy używają danych syntetycznych, bo `packs/` jest w `.gitignore` i prawdziwy case nie jest w repo.
+- **Zestaw testów**: pytest (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) pokrywa transcripty, monitory, wektory sił, sumy kontrolne, balans, brief, `ask` i serwer MCP jako osobny proces. `npm test` pokrywa adapter, `ask` po stronie TS, parser `geometry.yaml` i walidację id packa. Oba `ask` czytają te same przypadki (`tests/fixtures/ask-pack/cases.json`). Wszystko biegnie w CI. Testy używają danych syntetycznych, bo `packs/` jest w `.gitignore` i prawdziwy case nie jest w repo.
 - **Frontend Next.js 16 (`src/`)**: 
   - Dynamiczny warsztat podłączony pod `/api/packs`.
   - Przełącznik case'ów (lokalne z `packs/`, syntetyczny demo FS-26, wgrywanie JSON).
