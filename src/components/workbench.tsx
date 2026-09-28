@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AXIS_LABEL,
   FIELD_LABEL,
@@ -43,7 +43,6 @@ import {
   Check,
   Code2,
   Copy,
-  FileCheck2,
   FolderGit2,
   RefreshCw,
   Upload,
@@ -92,6 +91,29 @@ function ScoreBar({ label, value }: { label: string; value: number | null }) {
   )
 }
 
+const PREFERRED_PACK_ID = "BASELINEiter002"
+
+function errorMessage(err: unknown, fallback: string) {
+  return err instanceof Error && err.message ? err.message : fallback
+}
+
+async function fetchPackSummaries(): Promise<PackSummary[]> {
+  const res = await fetch("/api/packs")
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json()
+  return data.ok && Array.isArray(data.packs) ? data.packs : []
+}
+
+async function fetchAdaptedPack(packId: string): Promise<AdaptedPack> {
+  const res = await fetch(`/api/packs?id=${encodeURIComponent(packId)}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}: nie znaleziono packa`)
+  const data = await res.json()
+  if (!data.ok || !data.pack) {
+    throw new Error(data.error || "Błąd formatu odpowiedzi z /api/packs")
+  }
+  return adaptAeropack(data.pack, data.images, data.geometryYaml)
+}
+
 function buildDemoAdaptedPack(): AdaptedPack {
   const images = getDemoImages()
   const review = evaluateCase(demoFluentCase, demoKpis, demoCad, images)
@@ -112,6 +134,7 @@ function buildDemoAdaptedPack(): AdaptedPack {
     devices: [],
     reynolds: demoReynolds(),
     dataGaps: [],
+    forceConvention: null,
     rawPack: pack,
     prompt,
   }
@@ -121,7 +144,7 @@ export function Workbench() {
   const [availablePacks, setAvailablePacks] = useState<PackSummary[]>([])
   const [selectedPackId, setSelectedPackId] = useState<string>("demo-fs26")
   const [packData, setPackData] = useState<AdaptedPack>(buildDemoAdaptedPack)
-  const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [isLoading, setIsLoading] = useState<boolean>(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [showRawJson, setShowRawJson] = useState(false)
 
@@ -135,66 +158,76 @@ export function Workbench() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch pack list on mount
-  const fetchPackList = async (preferPackId?: string) => {
-    try {
-      setIsLoading(true)
-      setLoadError(null)
-      const res = await fetch("/api/packs")
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      if (data.ok && Array.isArray(data.packs)) {
-        setAvailablePacks(data.packs)
-        // If we found local packs, pick preferred or first one
-        if (data.packs.length > 0) {
-          const target = preferPackId || data.packs[0].id
-          await loadPack(target)
-        }
-      }
-    } catch (err: any) {
-      console.warn("Nie udało się pobrać listy packów z /api/packs:", err)
-      // fallback stays on demo pack
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchPackList("BASELINEiter002")
+  const showPack = useCallback((packId: string, adapted: AdaptedPack) => {
+    setSelectedPackId(packId)
+    setPackData(adapted)
+    setLoadError(null)
+    setPage(0)
+    const firstHero = adapted.images.find((i) => i.hero)
+    if (firstHero) setSelectedHeroId(firstHero.id)
   }, [])
 
   const loadPack = async (packId: string) => {
     if (packId === "demo-fs26") {
-      setSelectedPackId("demo-fs26")
-      setPackData(buildDemoAdaptedPack())
-      setLoadError(null)
+      showPack(packId, buildDemoAdaptedPack())
       return
     }
-
+    setIsLoading(true)
+    setLoadError(null)
     try {
-      setIsLoading(true)
-      setLoadError(null)
-      const res = await fetch(`/api/packs?id=${encodeURIComponent(packId)}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}: nie znaleziono packa`)
-      const data = await res.json()
-      if (!data.ok || !data.pack) {
-        throw new Error(data.error || "Błąd formatu odpowiedzi z /api/packs")
-      }
-
-      const adapted = adaptAeropack(data.pack, data.images, data.geometryYaml)
-      setSelectedPackId(packId)
-      setPackData(adapted)
-      setPage(0)
-      if (adapted.images.length > 0) {
-        const firstHero = adapted.images.find((i) => i.hero)
-        if (firstHero) setSelectedHeroId(firstHero.id)
-      }
-    } catch (err: any) {
-      setLoadError(err.message || "Błąd ładowania packa")
+      showPack(packId, await fetchAdaptedPack(packId))
+    } catch (err) {
+      setLoadError(errorMessage(err, "Błąd ładowania packa"))
     } finally {
       setIsLoading(false)
     }
   }
+
+  const refreshPacks = async () => {
+    setIsLoading(true)
+    setLoadError(null)
+    try {
+      const packs = await fetchPackSummaries()
+      setAvailablePacks(packs)
+      if (packs.some((p) => p.id === selectedPackId)) {
+        showPack(selectedPackId, await fetchAdaptedPack(selectedPackId))
+      }
+    } catch (err) {
+      setLoadError(errorMessage(err, "Nie udało się odświeżyć listy packów"))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Pack list and the first local pack, once on mount. State is only set from
+  // promise callbacks; the demo pack stays if /api/packs is unreachable.
+  useEffect(() => {
+    let cancelled = false
+    fetchPackSummaries()
+      .then((packs) => {
+        if (cancelled) return
+        setAvailablePacks(packs)
+        const target = packs.find((p) => p.id === PREFERRED_PACK_ID)?.id ?? packs[0]?.id
+        if (!target) return
+        return fetchAdaptedPack(target).then(
+          (adapted) => {
+            if (!cancelled) showPack(target, adapted)
+          },
+          (err: unknown) => {
+            if (!cancelled) setLoadError(errorMessage(err, "Błąd ładowania packa"))
+          },
+        )
+      })
+      .catch((err: unknown) => {
+        console.warn("Nie udało się pobrać listy packów z /api/packs:", err)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showPack])
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -203,18 +236,10 @@ export function Workbench() {
     const reader = new FileReader()
     reader.onload = (event) => {
       try {
-        const rawJson = JSON.parse(event.target?.result as string)
-        const adapted = adaptAeropack(rawJson)
-        setSelectedPackId("custom")
-        setPackData(adapted)
-        setLoadError(null)
-        setPage(0)
-        if (adapted.images.length > 0) {
-          const firstHero = adapted.images.find((i) => i.hero)
-          if (firstHero) setSelectedHeroId(firstHero.id)
-        }
-      } catch (err: any) {
-        setLoadError("Niepoprawny plik JSON: " + err.message)
+        const rawJson: unknown = JSON.parse(String(event.target?.result))
+        showPack("custom", adaptAeropack(rawJson))
+      } catch (err) {
+        setLoadError("Niepoprawny plik JSON: " + errorMessage(err, "nieznany błąd"))
       }
     }
     reader.readAsText(file)
@@ -234,12 +259,6 @@ export function Workbench() {
   } = packData
   const stats = useMemo(() => catalogStats(images), [images])
   const heroes = useMemo(() => images.filter((i) => i.hero), [images])
-
-  useEffect(() => {
-    if (heroes.length > 0 && !heroes.some((h) => h.id === selectedHeroId)) {
-      setSelectedHeroId(heroes[0].id)
-    }
-  }, [heroes, selectedHeroId])
 
   const filtered = useMemo(() => {
     return images.filter((img) => {
@@ -321,7 +340,7 @@ export function Workbench() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => fetchPackList(selectedPackId)}
+            onClick={refreshPacks}
             disabled={isLoading}
             title="Odśwież listę z folderu packs/"
           >
@@ -632,7 +651,7 @@ export function Workbench() {
 
           <p className="text-sm text-muted-foreground">
             {fmtNum(kpis.downforceN, 0)} N downforce / {fmtNum(kpis.dragN, 0)} N drag przy{" "}
-            {fluentCase.speedMs ?? "brak"} m/s (konwencja {packData.rawPack?.kpis?.forceConvention || "half-model"}) · Re ≈{" "}
+            {fluentCase.speedMs ?? "brak"} m/s (konwencja {packData.forceConvention || "half-model"}) · Re ≈{" "}
             {packData.reynolds == null ? "brak" : `${(packData.reynolds / 1e6).toFixed(2)}×10`}
             {packData.reynolds != null && <sup>6</sup>}
           </p>
