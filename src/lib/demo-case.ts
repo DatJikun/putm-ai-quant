@@ -9,6 +9,7 @@ export const fluentCase: FluentCase = {
   solver: "Fluent 2024 R2, pressure-based, steady, coupled",
   turbulence: "k-ω SST",
   wallTreatment: "low-Re, y+ ≈ 1 na skrzydłach (założenie setupu)",
+  wallResolved: true,
   cellsM: 18.4,
   speedMs: 15,
   yawDeg: 0,
