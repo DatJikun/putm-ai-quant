@@ -60,6 +60,7 @@ putm-ai-quant/
 │   ├── pack-path.test.ts   # node:test: walidacja id packa
 │   ├── geometry-yaml.test.ts # node:test: parser kart geometry.yaml
 │   ├── adapter-gaps.test.ts # node:test: adapter paczki pod UI
+│   ├── agent.test.ts       # node:test: silnik oceny (progi, werdykty, reguła y+)
 │   └── fixtures/           # ask-pack/ (paczka + cases.json), ask-empty/
 ├── packs/                  # Wygenerowane paczki (w .gitignore, nie ma ich w repo)
 │   └── <case>/             # aeropack.json, dla-chatbota.md, geometry.yaml, slices.yaml,
@@ -96,7 +97,7 @@ Bez `ocp` polecenie `pack` nie przerywa pracy: dopisuje ostrzeżenie i zostawia 
 
 ```bash
 python -m pytest        # ingest, ask
-npm test                # adapter, ask (TS), walidacja id packa
+npm test                # adapter, silnik oceny, ask (TS), parser YAML, walidacja id packa
 npm run lint
 npm run typecheck       # next typegen + tsc --noEmit
 ```
@@ -214,6 +215,8 @@ Aplikacja startuje pod adresem: [http://127.0.0.1:43147](http://127.0.0.1:43147)
   - Rzuty geometryczne bolidu ze znacznikami stacji.
 - **4. Zakładka Agent pack**: Gotowy, sformatowany prompt ze wszystkimi dowodami do skopiowania do modelu lub podejrzenia w surowym JSON.
 - **5. Zakładka Ocena**: Deterministyczny silnik oceny aero FSAE (zbieżność, siatka, $L/D$, balans, pokrycie wizualne), wykryte problemy z dowodami i zaleceniami, pytania do inżyniera oraz propozycje kolejnych kroków testowych.
+  - Werdykt: `nieufne` przy każdym blockerze (brak Cd/Cl, brak indeksu klatek albo hero na jednej z osi), `do-poprawy` przy co najmniej dwóch issue, `warunkowo-akceptowalne` przy jednym issue albo jakimkolwiek ostrzeżeniu (watch), w przeciwnym razie `akceptowalne`.
+  - Reguła y+: gdy setup nie używa funkcji ściany (`methods.wallTreatment` z case'a, np. k-ω), średnie y+ na skrzydłach powyżej 5 to issue i obniża ocenę siatki. Gdy case nie podaje obróbki ściany albo używa funkcji ściany, reguła milczy.
 
 ---
 

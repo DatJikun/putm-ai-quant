@@ -69,10 +69,7 @@ export function evaluateCase(
   const continuity = fluent.residuals.continuity
   const continuityOk = continuity != null && continuity < 1e-4
   const yPlusAvg = fluent.yPlusWings?.avg ?? null
-  const yPlusSetupMismatch =
-    yPlusAvg != null &&
-    fluent.wallTreatment.includes("y+ ≈ 1") &&
-    yPlusAvg > 5
+  const yPlusSetupMismatch = yPlusAvg != null && fluent.wallResolved === true && yPlusAvg > 5
 
   const zbieznosc =
     continuity == null || continuity <= 0
@@ -174,8 +171,8 @@ export function evaluateCase(
     findings.push({
       id: "yplus-wings",
       severity: "issue",
-      title: "y+ na skrzydłach nie zgadza się z low-Re SST",
-      evidence: `Setup deklaruje y+ ≈ 1, a na skrzydłach y+ średnie = ${fluent.yPlusWings.avg} (max ${fluent.yPlusWings.max ?? "brak"}). Podłoga: avg ${fluent.yPlusFloor?.avg ?? "brak"}.`,
+      title: "y+ na skrzydłach nie zgadza się z setupem bez funkcji ściany",
+      evidence: `Setup (${fluent.turbulence}) rozwiązuje ścianę, więc oczekiwane y+ ≈ 1, a na skrzydłach y+ średnie = ${fluent.yPlusWings.avg} (max ${fluent.yPlusWings.max ?? "brak"}). Podłoga: avg ${fluent.yPlusFloor?.avg ?? "brak"}.`,
       recommendation:
         "Zagęścić pryzmę na płatach i klapach albo przełączyć warstwę przyścienną na wall functions i nie mieszać obu podejść w jednym raporcie.",
     })
@@ -272,7 +269,7 @@ export function evaluateCase(
     findings.push({
       id: "lod-ok",
       severity: "info",
-      title: `L/D = ${kpis.LOverD.toFixed(2)} — w normie mocnego paczka FS`,
+      title: `L/D = ${kpis.LOverD.toFixed(2)} — w normie mocnego pakietu aero FS`,
       evidence: `Cl ${kpis.Cl}, Cd ${kpis.Cd}${re == null ? "" : `, Re ≈ ${(re / 1e6).toFixed(2)}e6`}. Downforce ${kpis.downforceN == null ? "brak" : kpis.downforceN.toFixed(0)} N / drag ${kpis.dragN == null ? "brak" : kpis.dragN.toFixed(0)} N przy ${fluent.speedMs ?? "brak"} m/s.`,
       recommendation:
         "Traktuj L/D jako KPI sezonu, ale decyzje geometryczne podejmuj na komponentach, nie na jednej liczbie z yaw 0.",

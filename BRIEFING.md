@@ -379,7 +379,7 @@ Dodane po pierwszej wersji:
 13. [x] **Analiza pól** — `field_grid.py` (siatka pola, ślad za skrzydłem), `surface_field.py` (mapy Cp, y+ i tarcia, profile), `screen_quant.py` (liczby z paska kolorów klatek), `car_layout.py` i `step_cards.py` (stacje i karty z geometrii case'a). Komendy: `grid`, `wake`, `surfaces`, `profiles`, `screens`.
 14. [x] **`ingest/diff_pack.py`, `chatbot_brief.py`, `ask.py`, `mcp_server.py`** — porównanie dwóch runów, skrót paczki dla czatu bez narzędzi (`dla-chatbota.md`), odpowiedzi na pojedyncze pytania i serwer MCP.
 
-Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) i `npm test` (adapter, `ask`, parser `geometry.yaml`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
+Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) i `npm test` (adapter, silnik oceny `agent.ts`, `ask`, parser `geometry.yaml`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
 
 ---
 
@@ -413,7 +413,7 @@ Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_inges
 ## 13. Co już jest w tym repo
 
 - **Lokalny pipeline Ingest (`ingest/`)**: w pełni funkcjonalny parser Fluenta, CAD i klatek. Złożył gotowy pack `BASELINEiter002` (bolid PM09, 11.3 mln komórek, 1840 iteracji, podział strefowy).
-- **Zestaw testów**: pytest (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) pokrywa transcripty, monitory, wektory sił, sumy kontrolne, balans, brief, `ask` i serwer MCP jako osobny proces. `npm test` pokrywa adapter, `ask` po stronie TS, parser `geometry.yaml` i walidację id packa. Oba `ask` czytają te same przypadki (`tests/fixtures/ask-pack/cases.json`). Wszystko biegnie w CI. Testy używają danych syntetycznych, bo `packs/` jest w `.gitignore` i prawdziwy case nie jest w repo.
+- **Zestaw testów**: pytest (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) pokrywa transcripty, monitory, wektory sił, sumy kontrolne, balans, brief, `ask` i serwer MCP jako osobny proces. `npm test` pokrywa adapter, silnik oceny (progi, drabinę werdyktów, regułę y+), `ask` po stronie TS, parser `geometry.yaml` i walidację id packa. Oba `ask` czytają te same przypadki (`tests/fixtures/ask-pack/cases.json`). Wszystko biegnie w CI. Testy używają danych syntetycznych, bo `packs/` jest w `.gitignore` i prawdziwy case nie jest w repo.
 - **Frontend Next.js 16 (`src/`)**: 
   - Dynamiczny warsztat podłączony pod `/api/packs`.
   - Przełącznik case'ów (lokalne z `packs/`, syntetyczny demo FS-26, wgrywanie JSON).

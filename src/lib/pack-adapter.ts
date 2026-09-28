@@ -185,6 +185,7 @@ export function adaptAeropack(
   if (frontalArea == null) dataGaps.push("Brak Aref.")
 
   const fluentVersion = str(methods.fluentVersion)
+  const wallSetup = str(methods.wallTreatment)
   const wheelRotation = rec(methods.wheelRotation)
   const solverSessions = list(methods.solverSessions).map(rec)
   const convergence = rec(kpisRaw.convergence)
@@ -214,6 +215,7 @@ export function adaptAeropack(
     residuals,
     yPlusWings,
     yPlusFloor,
+    wallResolved: wallSetup == null ? null : /resolved|bez funkcji ściany/i.test(wallSetup),
     minOrthogonalQuality: num(mesh.minOrthogonalQuality),
     mrfFan: Boolean(methods.mrfFan),
     wheelsRotate: methods.wheelRotation ? Boolean(wheelRotation.front && wheelRotation.rear) : null,

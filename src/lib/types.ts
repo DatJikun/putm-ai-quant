@@ -87,6 +87,8 @@ export type FluentCase = {
   solver: string
   turbulence: string
   wallTreatment: string
+  /** The setup resolves the wall (no wall functions), so y+ ≈ 1 is expected. null: the case does not say. */
+  wallResolved?: boolean | null
   cellsM: number | null
   speedMs: number | null
   yawDeg: number
