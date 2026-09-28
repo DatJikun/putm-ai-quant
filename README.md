@@ -14,32 +14,62 @@ Problem inżynierski: z symulacji CFD w Ansys Fluent otrzymujemy surowe pliki `.
 
 ## 1. Architektura systemu
 
-System składa się z dwóch ściśle współpracujących warstw:
+System składa się z dwóch ściśle współpracujących warstw i wspólnego kontraktu danych (`aeropack.json`):
 
 ```
-fsae-ai-quant/
-├── ingest/                 # Python 3.11+: parser Fluenta, CAD i klatek
+putm-ai-quant/
+├── ingest/                 # Python 3.11+: parsery Fluenta, CAD i klatek + CLI
+│   ├── __main__.py         # CLI: python -m ingest <polecenie> (lista w sekcji 2)
+│   │   # -- czytanie case'a --
 │   ├── inventory.py        # Skanowanie i kategoryzacja folderu symulacji
-│   ├── transcript.py       # Regex parser plików .trn (wersja, siatka, błędy)
-│   ├── cas_setup.py        # Ekstrakcja definicji raportów i wektorów sił z .cas
-│   ├── rfile.py            # Parser plików monitorów (*-rfile.out)
-│   ├── wall_forces.py      # Ekstrakcja sił per strefa, sumy kontrolne, odcięcie tunelu
-│   ├── cad_measure.py      # Pomiary cięciw, kątów AoA i LE/TE ze STEP przez OpenCASCADE
-│   ├── slices.py           # Definicje stacji i zakresów współrzędnych
-│   ├── pictures.py         # Indeksowanie batcha zdjęć i wybór hero klatek
-│   ├── fluent_dump.py      # Headless Fluent runner (generowanie i zrzut sił ścian)
-│   └── pack.py             # Główny kompilator składający aeropack.json
-├── templates/              # Źródła prawdy i szablony
+│   ├── transcript.py       # Parser plików .trn (wersja, siatka, jakość, błędy, sesje)
+│   ├── setup_trace.py      # Ustawienia solvera zapisane w transcripcie (nie journal)
+│   ├── cas_setup.py        # Definicje raportów, wartości odniesienia, koła, turbulencja z .cas / .cas.h5
+│   ├── wft_mesh.py         # Warstwy przyścienne z workflow Fluent Meshing (.wft)
+│   ├── rfile.py            # Monitory (*-rfile.out): wartości, stabilność, dryf
+│   │   # -- siły i balans --
+│   ├── wall_forces.py      # Siły per strefa, grupy FW/RW/podłoga/koła, sumy kontrolne
+│   ├── fluent_dump.py      # Headless Fluent: journal i zrzut sił ścian
+│   ├── balance.py          # Balans przód/tył z momentu solvera (nie z udziału FW/RW)
+│   │   # -- geometria --
+│   ├── cad_measure.py      # Pomiary brył STEP przez OpenCASCADE (cięciwa, AoA, LE/TE)
+│   ├── step_cards.py       # Karty urządzeń aero ze STEP-a case'a
+│   ├── step_prep.py        # Przygotowanie połówki STEP dla SpaceClaim (narzędzie pomocnicze)
+│   ├── car_layout.py       # Rozmieszczenie stacji na całym aucie, nie tylko na płatach
+│   │   # -- klatki --
+│   ├── slices.py           # Stacje przekrojów X/Y/Z w metrach
+│   ├── pictures.py         # Indeks klatek CFD-Post i wybór hero
+│   ├── screen_quant.py     # Kolory klatek → liczby przez odczyt paska kolorów
+│   │   # -- pola z .cas.h5 + .dat.h5 --
+│   ├── field_grid.py       # Rzadka siatka pola na płaszczyźnie, ślad za skrzydłem (wake)
+│   ├── surface_field.py    # Cp, y+ i tarcie na FW/RW/podłodze; profile wzdłuż cięciwy
+│   │   # -- składanie i odpowiedzi --
+│   ├── pack.py             # Kompilator: aeropack.json + dla-chatbota.md
+│   ├── chatbot_brief.py    # Skrót paczki dla czatu bez narzędzi (dla-chatbota.md)
+│   ├── diff_pack.py        # Różnice dwóch paczek (model nie odejmuje sam)
+│   ├── ask.py              # Jedna odpowiedź z paczki: forces / part / slice
+│   └── mcp_server.py       # Serwer MCP (stdio) nad ask.py
+├── templates/              # Szablony
 │   ├── geometry.yaml       # Karty geometrii urządzeń aero (FW, RW, floor, etc.)
 │   └── slices.yaml         # Metadane płaszczyzn przekrojów X/Y/Z
-├── tests/                  # Testy jednostkowe parserów i konwersji
-│   ├── test_ingest.py      # testy pytest parserów, balansu i numeryki
-│   └── adapter-gaps.test.ts # testy adaptera paczki pod UI (npm test)
-├── packs/                  # Wygenerowane paczki symulacji (np. BASELINEiter002)
-│   └── BASELINEiter002/    # aeropack.json, geometry.yaml, index zdjęć
+├── tests/                  # Testy (uruchamiane też w CI)
+│   ├── test_ingest.py      # pytest: parsery, balans, sumy kontrolne, brief
+│   ├── test_ask.py         # pytest: ask.py na wspólnych przypadkach
+│   ├── ask.test.ts         # node:test: src/lib/ask.ts na tych samych przypadkach
+│   ├── pack-path.test.ts   # node:test: walidacja id packa
+│   ├── adapter-gaps.test.ts # node:test: adapter paczki pod UI
+│   └── fixtures/           # ask-pack/ (paczka + cases.json), ask-empty/
+├── packs/                  # Wygenerowane paczki (w .gitignore, nie ma ich w repo)
+│   └── <case>/             # aeropack.json, dla-chatbota.md, geometry.yaml, slices.yaml,
+│                           # inventory.json, images/index.json, opcjonalnie profile.json
+├── .github/workflows/ci.yml # CI: pytest, lint, typecheck, npm test, build
 └── src/                    # Warsztat Next.js 16 (App Router + Tailwind v4 + shadcn)
-    ├── app/api/packs/      # Endpoint API skanujący i serwujący lokalne packi
-    ├── lib/pack-adapter.ts # Adapter formatu aeropack/v1 pod struktury UI
+    ├── app/api/packs/      # Lista i odczyt lokalnych packów
+    ├── app/api/ask/        # To samo co ask.py po HTTP (forces / part / slice)
+    ├── lib/pack-adapter.ts # Adapter aeropack/v1 pod struktury UI
+    ├── lib/ask.ts          # Port ingest/ask.py (wspólne przypadki testowe)
+    ├── lib/pack-path.ts    # Walidacja id packa: tylko nazwa folderu pod packs/
+    ├── lib/agent.ts        # Deterministyczny silnik oceny aero
     └── components/         # Workbench, CarSchematic, ContourPreview
 ```
 
@@ -52,49 +82,87 @@ Ingest działa całkowicie lokalnie, obok Twoich plików Fluent i CAD. Nie wymag
 ### Wymagania i instalacja
 
 ```bash
-pip install -r requirements.txt
-# Opcjonalnie do cad_measure.py (analiza brył STEP):
-# pip install cadquery-ocp
+pip install -r requirements.txt   # pyyaml, numpy, pillow, h5py, pytest
+# Opcjonalnie: cad_measure.py, step_cards.py i step_prep.py (bryły STEP)
+pip install cadquery-ocp
 ```
 
-### Uruchomienie testów
+Bez `ocp` polecenie `pack` nie przerywa pracy: dopisuje ostrzeżenie i zostawia karty z `geometry.yaml`.
+
+### Uruchomienie testów i kontroli
 
 ```bash
-python -m pytest
-npm test
+python -m pytest        # ingest, ask
+npm test                # adapter, ask (TS), walidacja id packa
+npm run lint
+npm run typecheck       # next typegen + tsc --noEmit
 ```
-Testy weryfikują m.in.:
-- Wykrywanie wersji Fluenta, komórek, jakości siatki i błędów Metis z transcriptu.
-- Weryfikację wektora siły `(0, 0, -1)` w Scheme blob `.cas` i interpretację znaku downforce.
-- Podział sił na strefy z odrzuceniem `domain_ground` i `domain_sky`.
-- Zgodność sumy kontrolnej sił stref względem wartości globalnych (< 1% tolerancji).
+
+To samo, plus `npm run build`, robi CI (`.github/workflows/ci.yml`). Testy weryfikują m.in.:
+- Wykrywanie wersji Fluenta, komórek, jakości siatki, błędów Metis i przerwanych sesji z transcriptu.
+- Wektor siły `(0, 0, -1)` w ustawieniach `.cas` i interpretację znaku downforce.
+- Podział sił na strefy z odrzuceniem `domain_ground` i `domain_sky` oraz sumę kontrolną względem wartości globalnych (< 1% tolerancji).
+- Balans przód/tył z momentu solvera i jego odmowę, gdy oś momentu nie jest osią pochylenia.
+- Stabilność monitorów (dryf w ostatnim oknie, wczesne zatrzymanie) i treść `dla-chatbota.md`.
 - Obliczanie współrzędnych stacji w metrach z nazw klatek CFD-Post.
+- Zgodność odpowiedzi `ask` w Pythonie i TypeScripcie na wspólnych przypadkach (`tests/fixtures/ask-pack/cases.json`).
 
 ### Polecenia CLI ingestu
 
-Wszystkie operacje wywołuje się przez moduł `ingest`:
+Wszystkie operacje wywołuje się przez moduł `ingest` (`python -m ingest <polecenie> --help` pokazuje opcje).
 
-#### 1. Inwentaryzacja folderu case'a
-Skanuje folder, sprawdza obecność plików `.cas`, `.dat`, `.trn`, `.jou`, raportów i zdjęć, raportując braki:
+| Polecenie | Co robi | Wymaga |
+|---|---|---|
+| `inventory ROOT...` | Skanuje foldery, raportuje braki i typ (`full_case` / `mesh_only` / `incomplete`) | nic |
+| `pack ROOT [--out DIR]` | Składa pack: `aeropack.json`, `dla-chatbota.md`, `geometry.yaml`, `slices.yaml`, `inventory.json`, `images/index.json` | nic (`ocp` dla kart ze STEP) |
+| `dump-forces ROOT [--procs N] [--journal-only]` | Journal TUI i (opcjonalnie) headless Fluent zrzucający siły per strefa | `.cas.h5`, Ansys Fluent |
+| `brief PACK_DIR` | Odtwarza `dla-chatbota.md` z gotowego `aeropack.json` | `aeropack.json` |
+| `ask PACK forces\|part\|slice` | Jedna odpowiedź z paczki (`--part`, `--axis`, `--station`, `--field`) | `aeropack.json`, `profile.json`, `images/index.json` zależnie od pytania |
+| `diff BASELINE.json CANDIDATE.json` | Różnice dwóch paczek (`ΔCd`, `ΔCl`, wspólne komponenty) do `quant/diff.json` | dwa `aeropack.json` |
+| `screens ROOT` | Kolory klatek CFD-Post na liczby (odczyt paska kolorów) do `quant/<case>/ekrany.json` | Pillow, klatki |
+| `grid ROOT --station M [--axis x] [--quantity cp]` | Rzadka siatka pola (`cp`, `p`, `u`, `v`, `w`, `speed`) na płaszczyźnie | `.cas.h5` + `.dat.h5` |
+| `wake ROOT --station M --y-min .. --y-max .. --z-min .. --z-max ..` | Dziura Cp i obrót prędkości za skrzydłem (lokalizacja wirów) | `.cas.h5` + `.dat.h5` |
+| `surfaces ROOT [--pitch M]` | Mapa 3D Cp, y+ i tarcia na FW, RW i podłodze do `quant/<case>/powierzchnie.json` | `.cas.h5` + `.dat.h5` |
+| `profiles ROOT [--out FILE]` | Cp wzdłuż cięciwy na FW, RW i podłodze. Domyślnie do `packs/<case>/profile.json`, skąd czyta go `ask` | `.cas.h5` + `.dat.h5` |
+
+Najczęstsze wywołania:
+
 ```bash
+# Inwentaryzacja folderu case'a (sprawdza .cas, .dat, .trn, .jou, raporty, zdjęcia)
 python -m ingest inventory "sciezka/do/folderu/case" --out packs
-```
 
-#### 2. Złożenie kompletnego `aeropack.json`
-Przetwarza cały case, weryfikuje wektory, wyciąga residuale, indeksuje zdjęcia i tworzy gotowy pack:
-```bash
+# Kompletny pack (residuale, siły, balans, siatka, indeks zdjęć, geometria)
 python -m ingest pack "sciezka/do/folderu/case" --out packs/NAZWA_CASE
+
+# Profile Cp na płatach, żeby narzędzie `part` miało dane
+python -m ingest profiles "sciezka/do/folderu/case" --out packs/NAZWA_CASE/profile.json
+
+# Headless zrzut sił ścian, gdy monitor cz nie ma per-zone
+python -m ingest dump-forces "sciezka/do/folderu/case" --journal-only   # tylko journal .jou
+python -m ingest dump-forces "sciezka/do/folderu/case" --procs 4         # odpal Fluenta
 ```
 
-#### 3. Headless zrzut sił ścian z Fluenta (opcjonalnie)
-Jeśli monitor `cz` miał wyłączone `per-zone? #f` i nie masz zrzutu sił per komponent, skrypt generuje journal TUI i opcjonalnie odpala Ansys Fluent w trybie batch/headless:
+Porównanie dwóch runów: `python -m ingest diff packs/BASE/aeropack.json packs/NOWY/aeropack.json`.
+
+Narzędzie pomocnicze poza CLI: `python -m ingest.step_prep MODEL.STEP --out MODEL_half.STEP [--dry]` przygotowuje połówkę STEP dla SpaceClaim (nazwane grupy, domena, wentylator i chłodnica wyjęte). Domyślne ścieżki w tym skrypcie są ustawione pod komputer zespołu, więc podawaj je jawnie.
+
+### Odpowiedzi na pytania agenta: `ask`, MCP i HTTP
+
+Agent nie dostaje całej paczki, tylko pyta o jedną rzecz. Trzy pytania są dostępne trzema drogami z tą samą logiką:
+
+| Pytanie | MCP | HTTP (`/api/ask?id=<pack>&tool=...`) | CLI |
+|---|---|---|---|
+| Siły, docisk, moment, komponenty | `get_forces` | `tool=forces` | `ask PACK forces` |
+| Profil jednej części (`fw`, `rw`, `ut`) | `get_part` | `tool=part&part=rw` | `ask PACK part --part rw` |
+| Klatka najbliższa stacji (nazwa pliku, nie piksele) | `get_slice` | `tool=slice&axis=x&station=0.7&field=cpt` | `ask PACK slice --axis x --station 0.7` |
+
+Serwer MCP (stdio) uruchamiasz z katalogu repo:
+
 ```bash
-# Tylko wygeneruj journal .jou bez uruchamiania solvera:
-python -m ingest dump-forces "sciezka/do/folderu/case" --journal-only
-
-# Odpal Fluent headless na 4 rdzeniach i zrzuć siły automatycznie:
-python -m ingest dump-forces "sciezka/do/folderu/case" --procs 4
+python -m ingest.mcp_server packs/NAZWA_CASE
 ```
+
+`get_part` czyta `profile.json`, `get_slice` czyta `images/index.json`, a `get_forces` czyta `aeropack.json`. Brak pliku daje czytelny błąd z poleceniem, które go tworzy. Wersja TypeScript (`src/lib/ask.ts`) i Python (`ingest/ask.py`) muszą odpowiadać tak samo, dlatego oba testy czytają ten sam plik `tests/fixtures/ask-pack/cases.json`. Zmieniając jedną, zmień drugą.
 
 ---
 
@@ -131,7 +199,7 @@ Aplikacja startuje pod adresem: [http://127.0.0.1:43147](http://127.0.0.1:43147)
 
 ### Funkcjonalności UI
 
-- **Automatyczne wykrywanie lokalnych packów**: Endpoint `/api/packs` automatycznie odpytuje katalog `packs/` i ładuje znalezione symulacje (np. realny case `BASELINEiter002` bolidu PM09).
+- **Automatyczne wykrywanie lokalnych packów**: Endpoint `/api/packs` odpytuje katalog `packs/` i ładuje znalezione symulacje. Na starcie wybiera `BASELINEiter002` (case bolidu PM09), a gdy go nie ma, pierwszy dostępny pack. Bez katalogu `packs/` warsztat zostaje na syntetycznym demie. `id` packa musi być zwykłą nazwą folderu (bez `/`, `..`), inaczej API zwraca 400.
 - **Przełącznik w locie**: W nagłówku warsztatu można przełączać się między lokalnymi wynikami, syntetycznym demem FS-26 oraz wgranym plikiem JSON (drag & drop).
 - **1. Zakładka Źródła**: Pełna diagnostyka solvera, parametry siatki, lista wyłapanych ostrzeżeń (`warnings[]`) oraz reguły agenta.
 - **2. Zakładka Katalog**: Tabela klatek z filtrowaniem po osiach (Full, X, Y, Z) i polach ($C_p$, $C_{pT}$, prędkość, $y^+$), selektor hero ramek i podgląd konturów stacji.

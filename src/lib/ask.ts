@@ -57,7 +57,7 @@ async function part(read: PackReader, name: string): Promise<AskResult> {
   const key = name.trim().toLowerCase()
   if (!key) return fail(400, "brak nazwy części")
   const raw = await read("profile.json")
-  if (raw == null) return fail(404, "brak profile.json (python -m ingest profiles FOLDER_CASE_A --out packs/ID/profile.json)")
+  if (raw == null) return fail(404, "brak profile.json (python -m ingest profiles FOLDER_CASE --out packs/ID/profile.json)")
   for (const item of list(rec(raw).skrzydla)) {
     const wing = rec(item)
     if (wing.id !== key && !String(wing.nazwa ?? "").toLowerCase().includes(key)) continue

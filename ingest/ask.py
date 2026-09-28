@@ -36,7 +36,7 @@ def part(pack_dir: Path, name: str) -> dict:
         raise ValueError("brak nazwy części")
     doc = _read(pack_dir / "profile.json")
     if doc is None:
-        raise FileNotFoundError("brak profile.json (python -m ingest profiles FOLDER_CASE_A --out packs/ID/profile.json)")
+        raise FileNotFoundError("brak profile.json (python -m ingest profiles FOLDER_CASE --out packs/ID/profile.json)")
     for wing in doc.get("skrzydla") or []:
         if wing.get("id") != key and key not in str(wing.get("nazwa", "")).lower():
             continue

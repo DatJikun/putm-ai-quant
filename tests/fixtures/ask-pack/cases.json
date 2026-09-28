@@ -87,6 +87,6 @@
   },
   { "name": "unknown tool", "tool": "bogus", "args": {}, "error": "nieznane pytanie: bogus" },
   { "name": "empty folder has no forces", "pack": "ask-empty", "tool": "forces", "args": {}, "error": "brak aeropack.json" },
-  { "name": "empty folder has no profile", "pack": "ask-empty", "tool": "part", "args": { "part": "fw" }, "error": "brak profile.json (python -m ingest profiles FOLDER_CASE_A --out packs/ID/profile.json)" },
+  { "name": "empty folder has no profile", "pack": "ask-empty", "tool": "part", "args": { "part": "fw" }, "error": "brak profile.json (python -m ingest profiles FOLDER_CASE --out packs/ID/profile.json)" },
   { "name": "empty folder has no frames", "pack": "ask-empty", "tool": "slice", "args": { "axis": "x", "station": 0 }, "error": "brak klatki dla tej stacji" }
 ]
