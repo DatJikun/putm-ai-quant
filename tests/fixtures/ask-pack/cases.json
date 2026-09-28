@@ -1,0 +1,92 @@
+[
+  {
+    "name": "forces",
+    "tool": "forces",
+    "args": {},
+    "expect": {
+      "case": "FIX1", "cd": 1.186, "cl": -3.677, "ld": 3.1, "cm": null, "cz": 3.677,
+      "komponenty": { "fw": { "Cd": 0.2, "Cl": -1 }, "rw": { "Cd": 0.3, "Cl": -1.5 } }
+    }
+  },
+  {
+    "name": "forces under the MCP tool name",
+    "tool": "get_forces",
+    "args": {},
+    "expect": {
+      "case": "FIX1", "cd": 1.186, "cl": -3.677, "ld": 3.1, "cm": null, "cz": 3.677,
+      "komponenty": { "fw": { "Cd": 0.2, "Cl": -1 }, "rw": { "Cd": 0.3, "Cl": -1.5 } }
+    }
+  },
+  {
+    "name": "part by id keeps lower and upper sides",
+    "tool": "part",
+    "args": { "part": "fw" },
+    "expect": {
+      "id": "fw", "nazwa": "Front wing",
+      "przekroje": [
+        { "y_m": 0.1, "dol": "ssanie na 30% cięciwy", "gora": "łagodny nacisk" },
+        { "y_m": 0.3, "podsumowanie": "płaski rozkład" }
+      ]
+    }
+  },
+  {
+    "name": "part by a piece of the name, any case",
+    "tool": "get_part",
+    "args": { "part": "REAR" },
+    "expect": {
+      "id": "rw", "nazwa": "Rear wing",
+      "przekroje": [{ "y_m": 0.2, "dol": "odklejenie za 70%", "gora": "ssanie na 20%" }]
+    }
+  },
+  {
+    "name": "part with a missing upper side gives null, not a crash",
+    "tool": "part",
+    "args": { "part": "  UT " },
+    "expect": {
+      "id": "ut", "nazwa": "Underfloor tray",
+      "przekroje": [{ "y_m": 0.2, "dol": "tylko dół", "gora": null }]
+    }
+  },
+  { "name": "empty part name is refused", "tool": "part", "args": { "part": "" }, "error": "brak nazwy części" },
+  { "name": "unknown part", "tool": "part", "args": { "part": "zzz" }, "error": "brak części zzz" },
+  {
+    "name": "slice picks the nearest station of the axis",
+    "tool": "slice",
+    "args": { "axis": "x", "station": 0.9 },
+    "expect": { "plik": "x/far.png", "os": "x", "pole": "vel", "stacja_m": 0.75, "czesci": ["rw", "ut"] }
+  },
+  {
+    "name": "slice tie goes to the first frame",
+    "tool": "get_slice",
+    "args": { "axis": "x", "station": 0.5 },
+    "expect": { "plik": "x/near.png", "os": "x", "pole": "cpt", "stacja_m": 0.25, "czesci": ["fw"] }
+  },
+  {
+    "name": "slice filters by field and accepts a numeric string",
+    "tool": "slice",
+    "args": { "axis": "x", "station": "0.1", "field": "vel" },
+    "expect": { "plik": "x/far.png", "os": "x", "pole": "vel", "stacja_m": 0.75, "czesci": ["rw", "ut"] }
+  },
+  {
+    "name": "slice reads the legacy file key",
+    "tool": "slice",
+    "args": { "axis": "z", "station": 0 },
+    "expect": { "plik": "z/legacy-key.png", "os": "z", "pole": "cpt", "stacja_m": 0.1, "czesci": [] }
+  },
+  {
+    "name": "slice with no frame on that axis",
+    "tool": "slice",
+    "args": { "axis": "y", "station": 0 },
+    "error": "brak klatki dla tej stacji"
+  },
+  {
+    "name": "slice with a station that is not a number",
+    "tool": "slice",
+    "args": { "axis": "x", "station": "abc" },
+    "error": "station musi być liczbą"
+  },
+  { "name": "unknown tool", "tool": "bogus", "args": {}, "error": "nieznane pytanie: bogus" },
+  { "name": "empty folder has no forces", "pack": "ask-empty", "tool": "forces", "args": {}, "error": "brak aeropack.json" },
+  { "name": "empty folder has no profile", "pack": "ask-empty", "tool": "part", "args": { "part": "fw" }, "error": "brak profile.json (python -m ingest profiles FOLDER_CASE_A --out packs/ID/profile.json)" },
+  { "name": "empty folder has no frames", "pack": "ask-empty", "tool": "slice", "args": { "axis": "x", "station": 0 }, "error": "brak klatki dla tej stacji" }
+]

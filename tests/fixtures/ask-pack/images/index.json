@@ -1,0 +1,8 @@
+{
+  "index": [
+    { "axis": "x", "field": "cpt", "stationM": 0.25, "filename": "x/near.png", "onCar": ["fw"] },
+    { "axis": "x", "field": "vel", "stationM": 0.75, "filename": "x/far.png", "onCar": ["rw", "ut"] },
+    { "axis": "x", "field": "cpt", "stationM": null, "filename": "x/no-station.png" },
+    { "axis": "z", "field": "cpt", "stationM": 0.1, "file": "z/legacy-key.png" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "aeropack/v1",
+  "identity": { "caseId": "FIX1" },
+  "kpis": {
+    "Cd": 1.186,
+    "Cl": -3.677,
+    "LOverD": 3.1,
+    "cm": null,
+    "cz": 3.677,
+    "components": {
+      "groups": {
+        "fw": { "Cd": 0.2, "Cl": -1 },
+        "rw": { "Cd": 0.3, "Cl": -1.5 }
+      }
+    }
+  }
+}

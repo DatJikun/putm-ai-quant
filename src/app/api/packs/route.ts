@@ -1,86 +1,109 @@
 import { NextRequest, NextResponse } from "next/server"
 import fs from "fs/promises"
 import path from "path"
+import { packsRoot, resolvePackDir } from "@/lib/pack-path"
+
+type Rec = Record<string, unknown>
+
+function rec(value: unknown): Rec {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Rec) : {}
+}
+
+async function readIfPresent(file: string): Promise<string | null> {
+  try {
+    return await fs.readFile(file, "utf-8")
+  } catch {
+    return null
+  }
+}
+
+/** Frames from `images/index.json`; null when the file is missing or not valid JSON. */
+async function readImagesIndex(packFolder: string): Promise<unknown[] | null> {
+  const raw = await readIfPresent(path.join(packFolder, "images", "index.json"))
+  if (raw === null) return null
+  try {
+    const index = rec(JSON.parse(raw)).index
+    return Array.isArray(index) ? index : []
+  } catch {
+    return null
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get("id")
-    const packsDir = path.join(process.cwd(), "packs")
 
     // If a specific pack ID is requested, return its full data
     if (id) {
-      // Prevent directory traversal
-      const safeId = path.basename(id)
-      const packFolder = path.join(packsDir, safeId)
-      const aeropackPath = path.join(packFolder, "aeropack.json")
+      const packFolder = resolvePackDir(id)
+      if (!packFolder) {
+        return NextResponse.json({ ok: false, error: "niepoprawne id packa" }, { status: 400 })
+      }
 
-      try {
-        const rawContent = await fs.readFile(aeropackPath, "utf-8")
-        const pack = JSON.parse(rawContent)
-
-        // Try reading images index
-        let imagesList: any[] = []
-        try {
-          const indexPath = path.join(packFolder, "images", "index.json")
-          const indexRaw = await fs.readFile(indexPath, "utf-8")
-          const parsedIndex = JSON.parse(indexRaw)
-          imagesList = parsedIndex.index || []
-        } catch {
-          imagesList = pack.images?.hero || []
-        }
-
-        // Try reading geometry.yaml
-        let geometryYaml = ""
-        try {
-          const geomPath = path.join(packFolder, "geometry.yaml")
-          geometryYaml = await fs.readFile(geomPath, "utf-8")
-        } catch {
-          // ignore if missing
-        }
-
-        return NextResponse.json({
-          ok: true,
-          id: safeId,
-          pack,
-          images: imagesList,
-          geometryYaml,
-        })
-      } catch (err: any) {
+      const rawContent = await readIfPresent(path.join(packFolder, "aeropack.json"))
+      if (rawContent === null) {
         return NextResponse.json(
-          { ok: false, error: `Nie znaleziono packa '${safeId}' na dysku: ${err.message}` },
-          { status: 404 }
+          { ok: false, error: `Nie znaleziono packa '${id}' na dysku.` },
+          { status: 404 },
         )
       }
+      let pack: Rec
+      try {
+        pack = rec(JSON.parse(rawContent))
+      } catch {
+        return NextResponse.json(
+          { ok: false, error: `Pack '${id}' ma uszkodzony aeropack.json.` },
+          { status: 422 },
+        )
+      }
+
+      // Without an images index the hero frames stored in the pack itself are used
+      const hero = rec(pack.images).hero
+      const imagesList = (await readImagesIndex(packFolder)) ?? (Array.isArray(hero) ? hero : [])
+
+      const geometryYaml = (await readIfPresent(path.join(packFolder, "geometry.yaml"))) ?? ""
+
+      return NextResponse.json({
+        ok: true,
+        id,
+        pack,
+        images: imagesList,
+        geometryYaml,
+      })
     }
 
     // Otherwise, list all available packs
-    const entries = await fs.readdir(packsDir, { withFileTypes: true })
+    const packsDir = packsRoot()
+    let entries: import("fs").Dirent[]
+    try {
+      entries = await fs.readdir(packsDir, { withFileTypes: true })
+    } catch {
+      return NextResponse.json({ ok: true, packs: [] })
+    }
     const packs = []
 
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const aeropackPath = path.join(packsDir, entry.name, "aeropack.json")
-        try {
-          const stat = await fs.stat(aeropackPath)
-          if (stat.isFile()) {
-            const rawContent = await fs.readFile(aeropackPath, "utf-8")
-            const pack = JSON.parse(rawContent)
-            packs.push({
-              id: entry.name,
-              name: `${pack.identity?.vehicle || "Aero"} · ${pack.identity?.caseId || entry.name}`,
-              vehicle: pack.identity?.vehicle || "PM09",
-              generatedAt: pack.generatedAt,
-              cells: pack.mesh?.cells || 0,
-              imagesTotal: pack.images?.total || 0,
-              heroCount: Array.isArray(pack.images?.hero) ? pack.images.hero.length : 0,
-              warningsCount: Array.isArray(pack.warnings) ? pack.warnings.length : 0,
-              isLocal: true,
-            })
-          }
-        } catch {
-          // Skip if aeropack.json doesn't exist
-        }
+      if (!entry.isDirectory()) continue
+      const rawContent = await readIfPresent(path.join(packsDir, entry.name, "aeropack.json"))
+      if (rawContent === null) continue
+      try {
+        const pack = rec(JSON.parse(rawContent))
+        const identity = rec(pack.identity)
+        const images = rec(pack.images)
+        packs.push({
+          id: entry.name,
+          name: `${identity.vehicle || "Aero"} · ${identity.caseId || entry.name}`,
+          vehicle: identity.vehicle || "PM09",
+          generatedAt: pack.generatedAt,
+          cells: rec(pack.mesh).cells || 0,
+          imagesTotal: images.total || 0,
+          heroCount: Array.isArray(images.hero) ? images.hero.length : 0,
+          warningsCount: Array.isArray(pack.warnings) ? pack.warnings.length : 0,
+          isLocal: true,
+        })
+      } catch {
+        // Skip packs whose aeropack.json is not valid JSON
       }
     }
 
@@ -88,7 +111,8 @@ export async function GET(request: NextRequest) {
       ok: true,
       packs,
     })
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 })
+  } catch (err) {
+    console.error("/api/packs:", err)
+    return NextResponse.json({ ok: false, error: "błąd serwera" }, { status: 500 })
   }
 }
