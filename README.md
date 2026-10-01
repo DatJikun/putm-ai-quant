@@ -127,12 +127,13 @@ Wszystkie operacje wywołuje się przez moduł `ingest` (`python -m ingest <pole
 | `viewer ROOT [--out DIR] [--krok M]` | Eksport do przeglądarki 3D (CFD3DViewer): pole przepływu na siatce, powierzchnia auta z Cp, tarciem i y+, linie prądu, kamery. Folder `<nazwa>.viewer` | `.cas.h5` + `.dat.h5`, `zarr` |
 | `meta ROOT [--out DIR]` | **Metaplik**: folder `packs/<case>/meta/` z `meta.json` (wszystkie liczby, wnioski ze wskazaniem dowodu, pochodzenie każdej liczby) i mapami w dwóch rozdzielczościach (`powierzchnia_1cm.npz`, `powierzchnia_3mm.npz`) oraz `przekroje.npz` (150 płaszczyzn na oś). Zastępuje pliki CFD-Post i zdjęcia | `.cas.h5` + `.dat.h5` |
 | `meta-render META_DIR --out DIR [--powierzchnia 1cm\|3mm]` | Rysuje obrazki wyłącznie z map metapliku | folder metapliku |
+| `why PACK_A PACK_B [--out DIR]` | **Dlaczego się zmieniło**: zmiana docisku i oporu rozbita na części auta (udziały sumują się do 100%), na pasy wzdłuż auta, środek docisku, zmiany obrysu z geometrii, wiry, straty i oderwania, na końcu poziom zaufania do porównania. Zapisuje `quant/dlaczego/DLACZEGO.md` i `dlaczego.json`. Ta sama sekcja jest w `POROWNANIE.html` | metapliki obu paczek |
 | `meta-verify META_DIR` | Sprawdza kompletność i sumy kontrolne metapliku | folder metapliku |
 | `conservation ROOT` | Residua (z trendem) i bilans masy po brzegach domeny, przepływ przez chłodnicę i wentylator, do `quant/<case>/zachowanie.json` | `.cas.h5` + `.dat.h5` |
 | `mesh-study PACK PACK [PACK]` | Test niezależności od siatki: różnice, rząd zbieżności, ekstrapolacja i GCI przy trzech siatkach. Ostrzega, gdy poza siatką coś się różni | 2–3 paczki tego samego bolidu |
 | `dump-forces ROOT [--procs N] [--journal-only]` | Journal TUI i (opcjonalnie) headless Fluent zrzucający siły per strefa | `.cas.h5`, Ansys Fluent |
 | `brief PACK_DIR` | Odtwarza `dla-chatbota.md` z gotowego `aeropack.json` | `aeropack.json` |
-| `ask PACK forces\|part\|device\|slice` | Jedna odpowiedź z paczki (`--part`, `--device`, `--axis`, `--station`, `--field`) | `aeropack.json`, `profile.json`, `geometry.yaml`, `images/index.json` zależnie od pytania |
+| `ask PACK TOOL` | Jedna odpowiedź z paczki. `TOOL` to `forces`, `part`, `device`, `slice` albo (z metapliku) `findings`, `credibility`, `station`, `wall_value`, `explain_change`, `question`. Opcje: `--part`, `--device`, `--axis`, `--station`, `--field`, `--other`, `--pytanie`, `--limit`, `--waga`, `--x --y --z` | `aeropack.json`, `profile.json`, `geometry.yaml`, `images/index.json`, a dla nowych pytań `meta/meta.json` |
 | `diff BASELINE.json CANDIDATE.json` | Różnice dwóch paczek (`ΔCd`, `ΔCl`, wspólne komponenty) do `quant/diff.json` | dwa `aeropack.json` |
 | `screens ROOT` | Kolory klatek CFD-Post na liczby (odczyt paska kolorów) do `quant/<case>/ekrany.json` | Pillow, klatki |
 | `grid ROOT --station M [--axis x] [--quantity cp]` | Rzadka siatka pola (`cp`, `p`, `u`, `v`, `w`, `speed`) na płaszczyźnie | `.cas.h5` + `.dat.h5` |
@@ -222,7 +223,7 @@ Razem 18 MB zamiast 7,6 GB. Pozycje w mapach to całkowite indeksy kostek (dokł
 
 ### Odpowiedzi na pytania agenta: `ask`, MCP i HTTP
 
-Agent nie dostaje całej paczki, tylko pyta o jedną rzecz. Cztery pytania są dostępne trzema drogami z tą samą logiką:
+Agent nie dostaje całej paczki, tylko pyta o jedną rzecz. Cztery pierwsze pytania są dostępne trzema drogami z tą samą logiką (MCP, HTTP, CLI). Sześć pytań z metapliku, opisanych pod tabelą, jest tylko w Pythonie (MCP i CLI):
 
 | Pytanie | MCP | HTTP (`/api/ask?id=<pack>&tool=...`) | CLI |
 |---|---|---|---|
@@ -230,6 +231,17 @@ Agent nie dostaje całej paczki, tylko pyta o jedną rzecz. Cztery pytania są d
 | Profil jednej części (`fw`, `rw`, `ut`) | `get_part` | `tool=part&part=rw` | `ask PACK part --part rw` |
 | Karta jednego urządzenia aero (profil, cięciwa, kąt, LE/TE). Bez `device` lista id | `get_device` | `tool=device&device=fw-main` | `ask PACK device --device fw-main` |
 | Klatka najbliższa stacji (nazwa pliku, nie piksele) | `get_slice` | `tool=slice&axis=x&station=0.7&field=cpt` | `ask PACK slice --axis x --station 0.7` |
+
+Pytania z metapliku (wymagają `python -m ingest meta`):
+
+| Pytanie | MCP / `ask` | Co zwraca |
+|---|---|---|
+| Najważniejsze wnioski | `get_findings` (`limit`, `weight`) | wnioski od najważniejszych, każdy z dowodem |
+| Czy ufać symulacji | `get_credibility` | ocenę, pokrycie, sprawdzenia ze źródłami i to, czego nie sprawdzono |
+| Co dzieje się w przekroju | `get_station` (`x`) | stratę energii, wiry i cofnięty przepływ na najbliższej stacji |
+| Wartość na ścianie w punkcie | `get_wall_value` (`x`, `y`, `z`, rozdzielczość) | Cp, tarcie, y+ i cofnięty przepływ najbliższej kostki |
+| Dlaczego zmienił się docisk lub opór | `explain_change` (`other`) | rozkład zmiany na części, jak w `why` |
+| Pytanie po polsku | `question` | wybiera jedno z powyższych i podaje, którego użył |
 
 Serwer MCP (stdio) uruchamiasz z katalogu repo:
 
@@ -275,6 +287,11 @@ Aplikacja startuje pod adresem: [http://127.0.0.1:43147](http://127.0.0.1:43147)
 ### Funkcjonalności UI
 
 - **Automatyczne wykrywanie lokalnych packów**: Endpoint `/api/packs` odpytuje katalog `packs/` i ładuje znalezione symulacje. Na starcie wybiera `BASELINEiter002` (case bolidu PM09), a gdy go nie ma, pierwszy dostępny pack. Bez katalogu `packs/` warsztat zostaje na syntetycznym demie. `id` packa musi być zwykłą nazwą folderu (bez `/`, `..`), inaczej API zwraca 400.
+- **Strona główna (`/`)** to stan projektu: lista symulacji z `packs/` z werdyktem, oceną wiarygodności i liczbą wniosków, krótki opis działania i lista poleceń. Czyta dysk przy każdym otwarciu.
+- **Zakładka „Wnioski i wiarygodność”** (pierwsza, gdy pack ma metaplik): werdykt, wnioski z dowodami, ocena wiarygodności ze źródłami i brakami, pochodzenie każdej liczby oraz rozmiar plików Fluenta kontra metaplik. Linki do `SKROT.html`, `PELNY.html` i galerii przekrojów.
+- **Prawdziwe obrazy w katalogu**: miniatury klatek to nasze obrazy zrobione z plików Fluenta (przekrój w najbliższej płaszczyźnie albo widok Cp i y+ na aucie). Gdy klatka nie ma odpowiednika, pole mówi to wprost. Tylko syntetyczny FS-26 pokazuje udawane kontury, z opisem, że to demo.
+- **Zakładka „Porównanie”**: wstawia `quant/porownanie/POROWNANIE.html` zrobione poleceniem `compare` (`/api/porownanie`).
+- **Pliki packa przez HTTP**: `/api/packs/files/<id>/<ścieżka>` podaje wyłącznie pliki z listy dozwolonych (dokumenty `SKROT`/`PELNY`, `WIARYGODNOSC.md`, `meta/meta.json`, galeria i PNG z `obrazy/`). Reszta folderu, w tym `aeropack.json`, zostaje na dysku.
 - **Przełącznik w locie**: W nagłówku warsztatu można przełączać się między lokalnymi wynikami, syntetycznym demem FS-26 oraz wgranym plikiem JSON (drag & drop).
 - **1. Zakładka Źródła**: Pełna diagnostyka solvera, parametry siatki, lista wyłapanych ostrzeżeń (`warnings[]`) oraz reguły agenta.
 - **2. Zakładka Katalog**: Tabela klatek z filtrowaniem po osiach (Full, X, Y, Z) i polach ($C_p$, $C_{pT}$, prędkość, $y^+$), selektor hero ramek i podgląd konturów stacji.

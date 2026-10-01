@@ -16,6 +16,7 @@ from ingest.pack import build_pack
 from ingest.compare import compare
 from ingest.conservation import write_conservation
 from ingest.plane_images import render_all
+from ingest.why import explain, render as render_why
 from ingest.slices import load_slices
 from ingest.viewer_export import export_viewer_package
 from ingest.report import build_report
@@ -92,6 +93,14 @@ def main() -> None:
     mv = sub.add_parser("meta-verify", help="Sprawdź kompletność i sumy kontrolne folderu metapliku")
     mv.add_argument("meta_dir", type=Path)
 
+    wy = sub.add_parser(
+        "why",
+        help="Dlaczego druga symulacja różni się od pierwszej: rozkład zmiany na części, miejsca, środek docisku, geometrię i przepływ (potrzebne metapliki)",
+    )
+    wy.add_argument("reference", type=Path, help="folder paczki punktu odniesienia")
+    wy.add_argument("new", type=Path, help="folder paczki, o którą pytasz")
+    wy.add_argument("--out", type=Path)
+
     cons = sub.add_parser("conservation", help="Residua i bilans masy z .dat.h5")
     cons.add_argument("root", type=Path)
     cons.add_argument("--out", type=Path)
@@ -152,7 +161,7 @@ def main() -> None:
     brief = sub.add_parser("brief", help="Markdown dla chatbota z gotowego aeropack.json")
     brief.add_argument("pack_dir", type=Path)
 
-    ask = sub.add_parser("ask", help="Jedno pytanie do paczki: forces, part, device, slice")
+    ask = sub.add_parser("ask", help="Jedno pytanie do paczki: forces, part, device, slice, findings, credibility, station, wall_value, explain_change, question")
     ask.add_argument("pack", type=Path)
     ask.add_argument("tool")
     ask.add_argument("--part")
@@ -160,6 +169,13 @@ def main() -> None:
     ask.add_argument("--axis", default="x")
     ask.add_argument("--station", type=float, default=0.0)
     ask.add_argument("--field")
+    ask.add_argument("--other", help="nazwa drugiej paczki (explain_change, question)")
+    ask.add_argument("--pytanie", help="pytanie po polsku (tool question)")
+    ask.add_argument("--limit", type=int, default=10)
+    ask.add_argument("--waga")
+    ask.add_argument("--x", type=float)
+    ask.add_argument("--y", type=float)
+    ask.add_argument("--z", type=float)
 
     args = parser.parse_args()
     if args.cmd == "inventory":
@@ -264,6 +280,15 @@ def main() -> None:
     elif args.cmd == "meta-verify":
         problems = verify_meta(args.meta_dir)
         print(json.dumps({"ok": not problems, "problemy": problems}, ensure_ascii=False, indent=2))
+    elif args.cmd == "why":
+        meta_a = json.loads((args.reference / "meta" / "meta.json").read_text(encoding="utf-8"))
+        meta_b = json.loads((args.new / "meta" / "meta.json").read_text(encoding="utf-8"))
+        result = explain(meta_a, meta_b)
+        out = args.out or Path("quant") / "dlaczego"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "DLACZEGO.md").write_text(render_why(result), encoding="utf-8")
+        (out / "dlaczego.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(json.dumps({"out": str(out / "DLACZEGO.md"), "pewnosc": result["pewnosc"]["poziom"], "wnioski": result["wnioski"]}, ensure_ascii=False, indent=2))
     elif args.cmd == "conservation":
         out = args.out or Path("quant") / args.root.name / "zachowanie.json"
         cons_data = write_conservation(args.root, out)
@@ -337,6 +362,13 @@ def main() -> None:
                 "axis": args.axis,
                 "station": args.station,
                 "field": args.field,
+                "other": args.other,
+                "text": args.pytanie,
+                "limit": args.limit,
+                "waga": args.waga,
+                "x": args.x,
+                "y": args.y,
+                "z": args.z,
             },
         )
         print(json.dumps(payload, ensure_ascii=False, indent=2))

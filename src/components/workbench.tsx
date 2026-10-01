@@ -18,7 +18,8 @@ import { evaluateCase, VERDICT_LABEL } from "@/lib/agent"
 import { buildAgentPack, packAsPrompt } from "@/lib/pack"
 import { adaptAeropack, type AdaptedPack } from "@/lib/pack-adapter"
 import type { Axis, FieldId, Severity } from "@/lib/types"
-import { ContourPreview } from "@/components/contour-preview"
+import { FramePreview } from "@/components/frame-preview"
+import { FindingsPanel } from "@/components/findings-panel"
 import { CarSchematic } from "@/components/car-schematic"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -67,6 +68,10 @@ type PackSummary = {
   heroCount?: number
   warningsCount?: number
   isLocal?: boolean
+  verdict?: string | null
+  credibilityScore?: number | null
+  findingsCount?: number
+  hasMeta?: boolean
 }
 
 function fmtNum(value: number | null | undefined, digits = 2, suffix = "") {
@@ -111,7 +116,7 @@ async function fetchAdaptedPack(packId: string): Promise<AdaptedPack> {
   if (!data.ok || !data.pack) {
     throw new Error(data.error || "Błąd formatu odpowiedzi z /api/packs")
   }
-  return adaptAeropack(data.pack, data.images, data.geometryYaml)
+  return { ...adaptAeropack(data.pack, data.images, data.geometryYaml), meta: data.meta ?? null, gallery: data.gallery ?? null }
 }
 
 function buildDemoAdaptedPack(): AdaptedPack {
@@ -296,7 +301,7 @@ export function Workbench() {
           >
             {availablePacks.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} {p.isLocal ? "(Lokalny z packs/)" : ""}
+                {p.name} {p.isLocal ? "(Lokalny z packs/)" : ""}{p.credibilityScore != null ? ` · wiarygodność ${p.credibilityScore}/100` : ""}
               </option>
             ))}
             <option value="demo-fs26">Syntetyczny FS-26 (Demo)</option>
@@ -357,14 +362,38 @@ export function Workbench() {
       )}
 
       {/* Tabs */}
-      <Tabs defaultValue="zrodla" className="gap-5">
+      <Tabs defaultValue={packData.meta ? "wnioski" : "zrodla"} key={packData.id} className="gap-5">
         <TabsList variant="line" className="w-full flex-wrap justify-start">
-          <TabsTrigger value="zrodla">1. Źródła</TabsTrigger>
-          <TabsTrigger value="katalog">2. Katalog ({stats.total})</TabsTrigger>
-          <TabsTrigger value="kpi">3. Liczby + CAD</TabsTrigger>
-          <TabsTrigger value="pack">4. Agent pack</TabsTrigger>
-          <TabsTrigger value="ocena">5. Ocena</TabsTrigger>
+          {packData.meta && <TabsTrigger value="wnioski">Wnioski i wiarygodność</TabsTrigger>}
+          <TabsTrigger value="zrodla">Źródła</TabsTrigger>
+          <TabsTrigger value="katalog">Katalog ({stats.total})</TabsTrigger>
+          <TabsTrigger value="kpi">Liczby + CAD</TabsTrigger>
+          <TabsTrigger value="pack">Agent pack</TabsTrigger>
+          <TabsTrigger value="ocena">Ocena</TabsTrigger>
+          <TabsTrigger value="porownanie">Porównanie</TabsTrigger>
         </TabsList>
+
+        {packData.meta && (
+          <TabsContent value="wnioski">
+            <FindingsPanel packId={packData.id} meta={packData.meta} />
+          </TabsContent>
+        )}
+
+        <TabsContent value="porownanie" className="space-y-3">
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Porównanie symulacji zrobione poleceniem <span className="font-mono">python -m ingest compare</span>, razem z
+            sekcją „Dlaczego się zmieniło”. Gdy go nie ma, strona poniżej powie, jak je zrobić.{" "}
+            <a className="text-[#5ee0c0] underline underline-offset-2" href="/api/porownanie" target="_blank" rel="noreferrer">
+              Otwórz w osobnej karcie
+            </a>
+          </p>
+          <iframe
+            title="Porównanie symulacji"
+            src="/api/porownanie"
+            sandbox=""
+            className="h-[720px] w-full rounded-xl border border-white/10 bg-white"
+          />
+        </TabsContent>
 
         {/* Tab 1: Źródła */}
         <TabsContent value="zrodla" className="space-y-4">
@@ -604,11 +633,11 @@ export function Workbench() {
                         : "ring-white/10 hover:ring-white/30"
                     }`}
                   >
-                    <ContourPreview
-                      id={h.id}
-                      axis={h.axis}
-                      field={h.field}
-                      stationM={h.stationM}
+                    <FramePreview
+                      packId={packData.id}
+                      gallery={packData.gallery ?? null}
+                      image={h}
+                      isDemo={packData.id === "demo-fs26"}
                     />
                   </button>
                 ))}

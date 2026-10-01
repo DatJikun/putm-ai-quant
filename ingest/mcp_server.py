@@ -95,6 +95,36 @@ TOOLS = [
             "required": ["axis", "station"],
         },
     },
+    {
+        "name": "get_findings",
+        "description": "Posortowane wnioski o symulacji (najważniejsze pierwsze), każdy ze wskazaniem dowodu w meta.json. Zacznij od tego.",
+        "inputSchema": {"type": "object", "properties": {"limit": {"type": "number"}, "waga": {"type": "string", "enum": ["wysoka", "srednia", "niska", "info"]}}},
+    },
+    {
+        "name": "get_credibility",
+        "description": "Ocena wiarygodności 0-100: grupy, każde sprawdzenie z wagą, wyjaśnieniem i źródłem oraz to, czego nie dało się sprawdzić.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "get_station",
+        "description": "Przepływ w poprzek auta w jednym miejscu x: strata energii, wiry, ślad za kołem, cofnięty przepływ.",
+        "inputSchema": {"type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]},
+    },
+    {
+        "name": "get_wall_value",
+        "description": "Cp, tarcie, y+ i oderwanie w punkcie ściany najbliższym podanej pozycji (x, y, z w metrach).",
+        "inputSchema": {"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "resolution": {"type": "string", "enum": ["1cm", "3mm"]}}, "required": ["x", "y", "z"]},
+    },
+    {
+        "name": "explain_change",
+        "description": "Dlaczego ta symulacja różni się od drugiej (`other` to nazwa folderu paczki obok): rozkład zmiany na części, miejsca wzdłuż auta, środek docisku, geometria, przepływ i to, ile temu ufać.",
+        "inputSchema": {"type": "object", "properties": {"other": {"type": "string"}}},
+    },
+    {
+        "name": "question",
+        "description": "Pytanie po polsku. Zwraca odpowiedź narzędzia, które pasuje do słów w pytaniu, i jego nazwę.",
+        "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}, "other": {"type": "string"}}, "required": ["text"]},
+    },
 ]
 
 

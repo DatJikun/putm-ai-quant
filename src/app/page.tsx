@@ -1,189 +1,137 @@
 import Link from "next/link"
-import { sources, verdict } from "@/lib/research"
+import { listPacks } from "@/lib/pack-list"
 import { buttonVariants } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { ArrowRight } from "lucide-react"
 
-const LAYERS = [
+export const dynamic = "force-dynamic"
+
+const STEPS = [
   {
-    n: "01",
-    title: "Liczby z solvera, nie z pikseli",
-    body: ".cas/.dat (najlepiej CFF .cas.h5/.dat.h5) → Cl, Cd, Cs, momenty, siły po strefach, residuale, y+, Aref, V∞, model turbulencji. PyFluent FileSession albo FluentCFFReader. Stary binarny .cas bez HDF5: wyeksportuj EnSight/VTK albo odpal Fluent headless raz i zrzuc raporty.",
+    n: "1",
+    title: "Pliki z Fluenta wchodzą",
+    body: "Folder symulacji: .cas.h5, .dat.h5, .msh.h5 i model .step. Nie są potrzebne ani pliki CFD-Post, ani zrzuty ekranu, ani logi .trn/.out.",
   },
   {
-    n: "02",
-    title: "CAD jako linijka, nie jako ozdoba",
-    body: "STEP/STL → rozstaw osi, track, ride height, rake, lista części, pole czołowe. Agent musi wiedzieć, że X=0.70 m to oś przednia, a nie „jakiś przekrój”. Bez tego 1500 klatek to tapeta.",
+    n: "2",
+    title: "Wychodzi jeden mały metaplik",
+    body: "Siły i docisk po częściach auta, residua i bilans masy, mapy ciśnienia i tarcia na ścianie w dwóch rozdzielczościach (1 cm i 3 mm), przekroje przepływu co 2 cm oraz wnioski i ocena wiarygodności. Zamiast kilkudziesięciu GB zostaje kilkanaście MB.",
   },
   {
-    n: "03",
-    title: "Katalog 1500 → 15–30 hero",
-    body: "Nazwa pliku musi kodować oś, stację, pole, kamerę. Potem selector: FW, oś przednia, wlot podłogi, hoop, dyfuzor, RW, bliski i daleki ślad. Reszta zostaje w indeksie — VLM może dopytać, nie żre dumpa.",
-  },
-  {
-    n: "04",
-    title: "Agent z narzędziami, nie z jednym promptem",
-    body: "Pierwszy strzał: JSON + hero PNG. Drugi: tool „daj X=2.30 m Cp total”. Trzeci: porównaj z baseline. Tak robi AI CFD Scientist (vision gate) i Navier. Sam chat z 1500 załącznikami jest drogi i kłamie pewnością.",
+    n: "3",
+    title: "Z metapliku da się wyciągać wnioski",
+    body: "Przeglądarka, dokumenty skrótowy i pełny, porównanie dwóch symulacji z odpowiedzią na pytanie „dlaczego docisk się zmienił” oraz serwer MCP, przez który pyta chatbot.",
   },
 ]
 
-export default function HomePage() {
+const COMMANDS: readonly [string, string][] = [
+  ["python -m ingest report <folder>", "dokumenty SKROT i PELNY, obrazy, ocena wiarygodności"],
+  ["python -m ingest meta <folder>", "metaplik z mapami 1 cm i 3 mm oraz przekrojami"],
+  ["python -m ingest compare <A> <B>", "porównanie dwóch lub więcej symulacji, razem z sekcją „Dlaczego się zmieniło”"],
+  ["python -m ingest why <A> <B>", "samo wyjaśnienie zmiany docisku i oporu, część po części"],
+  ["python -m ingest viewer <folder>", "eksport do przeglądarki 3D przepływu (CFD3DViewer)"],
+]
+
+export default async function HomePage() {
+  const packs = await listPacks()
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-10">
-      <p className="font-mono text-[11px] tracking-[0.22em] text-[#5ee0c0] uppercase">
-        research + prototyp packa
-      </p>
+      <p className="font-mono text-[11px] tracking-[0.22em] text-[#5ee0c0] uppercase">stan projektu</p>
       <h1 className="mt-3 max-w-4xl text-4xl font-medium tracking-tight text-balance sm:text-5xl">
-        Tak — da się to skwantyfikować i dać agentowi. Nie jako 1500 zdjęć i surowe pliki Fluent.
+        Wyniki Fluenta zamienione na mały plik, z którego da się szybko wyciągać wnioski.
       </h1>
       <p className="mt-5 max-w-3xl text-base leading-relaxed text-muted-foreground">
-        Rozumiem setup: wynik Fluent (.cas + .dat), batch post-processingu całego
-        bolidu oraz płaszczyzn X/Y/Z (u Ciebie rzędu 1500 PNG) i oryginalny model
-        auta. Cel: recenzja aero, nie ładny slideshow. Nikt nie opublikował
-        gotowego klonu „Fluent Formula Student + 1500 klatek + CAD → jeden agent”,
-        ale kawałki już istnieją. Poniżej werdykt, literatura i propozycja, którą
-        da się kliknąć w warsztacie.
+        To narzędzie czyta symulacje z plików modelu i zastępuje pliki CFD-Post oraz zdjęcia z post-processingu
+        liczbami, mapami i opisanymi wnioskami. Każda liczba ma wskazane źródło, a ocena wiarygodności mówi też,
+        czego nie udało się sprawdzić.
       </p>
       <div className="mt-8 flex flex-wrap gap-3">
         <Link href="/warsztat" className={cn(buttonVariants())}>
-          Otwórz warsztat demo
+          Otwórz przeglądarkę pakietów
           <ArrowRight />
         </Link>
-        <a href="#zrodla" className={cn(buttonVariants({ variant: "outline" }))}>
-          12 źródeł z internetu
-        </a>
       </div>
 
-      <section className="mt-14 grid gap-3 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardDescription>Czy rozumiem</CardDescription>
-            <CardTitle>Tak, 1:1</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm leading-relaxed text-muted-foreground">
-            Fluent trzyma siatkę i pola. Zdjęcia to tylko rzuty. CAD mówi, gdzie
-            jest skrzydło i ziemia. Agent bez tych trzech warstw albo zgaduje z
-            colormapy, albo dusi się tokenami.
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Czy ktoś to zrobił</CardDescription>
-            <CardTitle>Kawałki, nie klon FS</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm leading-relaxed text-muted-foreground">
-            Navier recenzuje CFD. AI CFD Scientist ogląda PNG i łapie ciche błędy.
-            Zespoły FS automatyzują dump (Tampere, WAK, MDPI+Fluent). Brakuje
-            otwartego packa pod Twoje cas/dat.
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Czy wrzucać dump</CardDescription>
-            <CardTitle>Nie. Pack.</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm leading-relaxed text-muted-foreground">
-            {verdict.doNotDumpRaw}
-          </CardContent>
-        </Card>
+      <section className="mt-14">
+        <h2 className="text-2xl font-medium tracking-tight">Symulacje na tym komputerze</h2>
+        {packs.length === 0 ? (
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            Folder <span className="font-mono">packs/</span> jest pusty. Zrób pakiet poleceniem{" "}
+            <span className="font-mono">python -m ingest report &lt;folder symulacji&gt;</span>, a pojawi się tutaj.
+          </p>
+        ) : (
+          <div className="mt-5 grid gap-3 md:grid-cols-2">
+            {packs.map((p) => (
+              <Card key={p.id}>
+                <CardHeader>
+                  <CardDescription className="font-mono text-xs">{p.id}</CardDescription>
+                  <CardTitle>{p.name}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1.5 text-sm">
+                  {p.hasMeta ? (
+                    <>
+                      <p className="font-medium text-[#f4c14d]">{p.verdict ?? "Brak werdyktu"}</p>
+                      <p className="text-muted-foreground">
+                        Wiarygodność: {p.credibilityScore == null ? "brak oceny" : `${p.credibilityScore}/100`} ·{" "}
+                        {p.findingsCount} wniosków
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      Bez metapliku. Dołóż go poleceniem <span className="font-mono">python -m ingest meta</span>.
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    {(p.cells / 1e6).toFixed(1)} mln komórek · {p.imagesTotal} klatek w indeksie
+                    {p.warningsCount > 0 ? ` · ${p.warningsCount} ostrzeżeń` : ""}
+                  </p>
+                  <Link
+                    href="/warsztat"
+                    className="inline-block pt-1 text-xs text-[#5ee0c0] underline underline-offset-2"
+                  >
+                    Otwórz w przeglądarce
+                  </Link>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
       </section>
 
-      <section className="mt-16">
-        <h2 className="text-2xl font-medium tracking-tight">
-          Co ja bym zrobił z Twoimi plikami
-        </h2>
-        <ol className="mt-6 grid gap-4">
-          {LAYERS.map((layer) => (
+      <section className="mt-14">
+        <h2 className="text-2xl font-medium tracking-tight">Jak to działa</h2>
+        <ol className="mt-5 grid gap-4">
+          {STEPS.map((step) => (
             <li
-              key={layer.n}
-              className="grid gap-2 rounded-xl border border-white/10 bg-card p-5 md:grid-cols-[4rem_1fr] md:items-start"
+              key={step.n}
+              className="grid gap-2 rounded-xl border border-white/10 bg-card p-5 md:grid-cols-[3rem_1fr] md:items-start"
             >
-              <span className="font-mono text-sm text-[#5ee0c0]">{layer.n}</span>
+              <span className="font-mono text-sm text-[#5ee0c0]">{step.n}</span>
               <div>
-                <h3 className="font-medium">{layer.title}</h3>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  {layer.body}
-                </p>
+                <h3 className="font-medium">{step.title}</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{step.body}</p>
               </div>
             </li>
           ))}
         </ol>
       </section>
 
-      <section className="mt-16">
-        <h2 className="text-2xl font-medium tracking-tight">
-          Czego agentowi nie wolno obiecywać
-        </h2>
-        <ul className="mt-4 max-w-3xl space-y-2 text-sm leading-relaxed text-muted-foreground">
-          <li>
-            Że z PNG odczyta dokładne Cl — colormap jest zła do metrologii.
-            Liczby tylko z raportu sił.
-          </li>
-          <li>
-            Że „widzi separację” na jednej klatce. Musi złożyć X (ślad koła) + Z
-            (podłoga) + udział komponentu.
-          </li>
-          <li>
-            Że 18 mln komórek w .dat zmieści się w kontekście. Nie zmieści się.
-            Redukuj do stref i próbek.
-          </li>
-          <li>
-            Że yaw 0° wystarczy do slalomu FS. Pack sezonu to mapa V∞ × yaw ×
-            ride height, nie jeden ładny case.
-          </li>
-        </ul>
-      </section>
-
-      <section id="zrodla" className="mt-16 scroll-mt-20">
-        <h2 className="text-2xl font-medium tracking-tight">
-          Co znalazłem w internecie
-        </h2>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Szukałem recenzji CFD przez LLM/VLM, readerów Fluent, automatycznego
-          post-processingu i konkretnie Formula Student / FSAE.
-        </p>
-        <div className="mt-6 grid gap-3">
-          {sources.map((s) => (
-            <a
-              key={s.url}
-              href={s.url}
-              target="_blank"
-              rel="noreferrer"
-              className="block rounded-xl border border-white/10 bg-card p-4 transition hover:border-[#5ee0c0]/40"
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="font-medium">{s.title}</h3>
-                <span className="font-mono text-[11px] text-[#5ee0c0]">
-                  {s.overlap} · {s.year}
-                </span>
-              </div>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                {s.what}
-              </p>
-            </a>
+      <section className="mt-14">
+        <h2 className="text-2xl font-medium tracking-tight">Polecenia</h2>
+        <ul className="mt-4 space-y-2">
+          {COMMANDS.map(([command, what]) => (
+            <li key={command} className="grid gap-1 text-sm md:grid-cols-[22rem_1fr]">
+              <code className="text-foreground">{command}</code>
+              <span className="text-muted-foreground">{what}</span>
+            </li>
           ))}
-        </div>
-      </section>
-
-      <section className="mt-16 mb-8 rounded-2xl border border-[#5ee0c0]/30 bg-[#5ee0c0]/5 p-6">
-        <h2 className="text-xl font-medium">Następny krok na Twoich danych</h2>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-          Daj folder: .cas.h5/.dat.h5 (albo CSV z report definitions), STEP/STL,
-          zdjęcia z konwencją nazw <code className="text-foreground">oś_stacja_pole.png</code>.
-          Wtedy pack przestaje być syntetyczny. Demo obok pokazuje, jak ten pack
-          ma wyglądać i jakiego recenzenta warto na nim puścić.
+        </ul>
+        <p className="mt-4 max-w-3xl text-xs leading-relaxed text-muted-foreground">
+          Zgodność z rzeczywistością da się ocenić tylko z pomiarów. Do tego służy plik{" "}
+          <span className="font-mono">pomiary.json</span>. Bez niego ocena obejmuje wyłącznie jakość obliczeń i
+          porównanie z literaturą. Pełny opis jest w <span className="font-mono">JAK-TO-DZIALA.md</span>.
         </p>
-        <Link href="/warsztat" className={cn(buttonVariants(), "mt-4")}>
-          Zobacz pack na FS-26
-          <ArrowRight />
-        </Link>
       </section>
     </div>
   )

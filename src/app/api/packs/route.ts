@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import fs from "fs/promises"
 import path from "path"
-import { packsRoot, resolvePackDir } from "@/lib/pack-path"
+import { resolvePackDir } from "@/lib/pack-path"
+import { listPacks } from "@/lib/pack-list"
+import { parseGallery, summarizeMeta } from "@/lib/meta"
 
 type Rec = Record<string, unknown>
 
@@ -24,6 +26,17 @@ async function readImagesIndex(packFolder: string): Promise<unknown[] | null> {
   try {
     const index = rec(JSON.parse(raw)).index
     return Array.isArray(index) ? index : []
+  } catch {
+    return null
+  }
+}
+
+/** Parsed JSON of a file in the pack; null when it is missing or not valid JSON. */
+async function readJson(file: string): Promise<unknown> {
+  const raw = await readIfPresent(file)
+  if (raw === null) return null
+  try {
+    return JSON.parse(raw)
   } catch {
     return null
   }
@@ -64,53 +77,23 @@ export async function GET(request: NextRequest) {
 
       const geometryYaml = (await readIfPresent(path.join(packFolder, "geometry.yaml"))) ?? ""
 
+      // The meta pack and the gallery are optional: older packs have neither
+      const meta = summarizeMeta(await readJson(path.join(packFolder, "meta", "meta.json")))
+      const gallery = parseGallery(await readJson(path.join(packFolder, "obrazy", "index.json")))
+
       return NextResponse.json({
         ok: true,
         id,
         pack,
         images: imagesList,
         geometryYaml,
+        meta,
+        gallery,
       })
     }
 
     // Otherwise, list all available packs
-    const packsDir = packsRoot()
-    let entries: import("fs").Dirent[]
-    try {
-      entries = await fs.readdir(packsDir, { withFileTypes: true })
-    } catch {
-      return NextResponse.json({ ok: true, packs: [] })
-    }
-    const packs = []
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const rawContent = await readIfPresent(path.join(packsDir, entry.name, "aeropack.json"))
-      if (rawContent === null) continue
-      try {
-        const pack = rec(JSON.parse(rawContent))
-        const identity = rec(pack.identity)
-        const images = rec(pack.images)
-        packs.push({
-          id: entry.name,
-          name: `${identity.vehicle || "Aero"} · ${identity.caseId || entry.name}`,
-          vehicle: identity.vehicle || "PM09",
-          generatedAt: pack.generatedAt,
-          cells: rec(pack.mesh).cells || 0,
-          imagesTotal: images.total || 0,
-          heroCount: Array.isArray(images.hero) ? images.hero.length : 0,
-          warningsCount: Array.isArray(pack.warnings) ? pack.warnings.length : 0,
-          isLocal: true,
-        })
-      } catch {
-        // Skip packs whose aeropack.json is not valid JSON
-      }
-    }
-
-    return NextResponse.json({
-      ok: true,
-      packs,
-    })
+    return NextResponse.json({ ok: true, packs: await listPacks() })
   } catch (err) {
     console.error("/api/packs:", err)
     return NextResponse.json({ ok: false, error: "błąd serwera" }, { status: 500 })

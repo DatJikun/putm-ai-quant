@@ -84,7 +84,7 @@ def test_initialize_announces_tools(client):
 
 def test_tools_list_describes_every_tool(client):
     tools = client.call("tools/list")["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["get_forces", "get_part", "get_device", "get_slice"]
+    assert [tool["name"] for tool in tools] == ["get_forces", "get_part", "get_device", "get_slice", "get_findings", "get_credibility", "get_station", "get_wall_value", "explain_change", "question"]
     for tool in tools:
         assert tool["description"]
         assert tool["inputSchema"]["type"] == "object"
@@ -92,6 +92,15 @@ def test_tools_list_describes_every_tool(client):
     assert by_name["get_part"]["inputSchema"]["required"] == ["part"]
     assert by_name["get_slice"]["inputSchema"]["required"] == ["axis", "station"]
     assert "required" not in by_name["get_device"]["inputSchema"]
+    assert by_name["get_station"]["inputSchema"]["required"] == ["x"]
+    assert by_name["get_wall_value"]["inputSchema"]["required"] == ["x", "y", "z"]
+    assert by_name["question"]["inputSchema"]["required"] == ["text"]
+
+
+def test_meta_tools_say_how_to_make_the_meta_pack_when_it_is_missing(client):
+    result = client.tool("get_findings")
+    assert result["isError"] is True
+    assert "python -m ingest meta" in result["content"][0]["text"]
 
 
 def test_tool_call_returns_the_pack_answer_as_text(client):
