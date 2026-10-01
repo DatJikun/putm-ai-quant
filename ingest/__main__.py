@@ -11,6 +11,8 @@ from ingest.diff_pack import write_diff
 from ingest.fluent_dump import pick_cas_h5, run_fluent_dump, write_force_journal, find_fluent
 from ingest.inventory import write_inventory
 from ingest.pack import build_pack
+from ingest.conservation import write_conservation
+from ingest.report import build_report
 from ingest.field_grid import write_grid
 from ingest.surface_field import write_profiles, write_surfaces
 from ingest.screen_quant import write_quant
@@ -27,6 +29,17 @@ def main() -> None:
     pk = sub.add_parser("pack", help="Złóż aeropack.json z jednego case'a")
     pk.add_argument("root", type=Path)
     pk.add_argument("--out", type=Path)
+
+    rep = sub.add_parser(
+        "report",
+        help="Wszystko jednym poleceniem: pack, residua, bilans masy, siły na części, y+ i oderwania, raport z oceną",
+    )
+    rep.add_argument("root", type=Path)
+    rep.add_argument("--out", type=Path)
+
+    cons = sub.add_parser("conservation", help="Residua i bilans masy z .dat.h5")
+    cons.add_argument("root", type=Path)
+    cons.add_argument("--out", type=Path)
 
     dump = sub.add_parser(
         "dump-forces",
@@ -104,6 +117,15 @@ def main() -> None:
         out = args.out or Path("packs") / args.root.name
         pack = build_pack(args.root, out)
         print(json.dumps({"out": str(out), "kind": pack["identity"]["kind"], "warnings": pack["warnings"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "report":
+        out = args.out or Path("packs") / args.root.name
+        rep_data = build_report(args.root, out)
+        verdict = rep_data["verdict"]
+        print(json.dumps({"out": str(out), "raport": str(out / "raport.md"), "werdykt": verdict["label"], "ocena": verdict["status"], "na_czerwono": verdict["bad"], "na_zolto": verdict["warn"], "bez_danych": verdict["missing"], "brakuje": rep_data["missing"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "conservation":
+        out = args.out or Path("quant") / args.root.name / "zachowanie.json"
+        cons_data = write_conservation(args.root, out)
+        print(json.dumps({"out": str(out), "residua_ponizej_limitu": (cons_data["residuals"] or {}).get("allBelowLimit"), "bilans_masy_zamyka": (cons_data["massBalance"] or {}).get("closes"), "brakuje": cons_data["missing"]}, ensure_ascii=False, indent=2))
     elif args.cmd == "dump-forces":
         out = args.out or Path("packs") / args.root.name
         out.mkdir(parents=True, exist_ok=True)

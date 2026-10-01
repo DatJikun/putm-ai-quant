@@ -7,89 +7,16 @@ from pathlib import Path
 
 import numpy as np
 
+from ingest.h5_mesh import face_ranges as _face_ranges
+from ingest.h5_mesh import node_coords, node_cursor as _node_cursor, text_of as _text  # noqa: F401
+from ingest.wall_state import checked_layout, wall_state
+
 Q = 0.5 * 1.225 * 15.0 ** 2
 TARGETS = {
     "surface_fw": ("fw", "przednie skrzydło"),
     "surface_rw": ("rw", "tylne skrzydło"),
     "surface_ut": ("ut", "podłoga"),
 }
-
-
-def _text(raw) -> str:
-    item = raw if isinstance(raw, bytes) else raw.ravel()[0]
-    return item.decode()
-
-
-def _face_ranges(mesh) -> list[tuple[str, int, int]]:
-    top = mesh["meshes/1/faces/zoneTopology"]
-    names = _text(top["name"][()]).split(";")
-    types = top["zoneType"][()]
-    lo = top["minId"][()]
-    hi = top["maxId"][()]
-    walls = []
-    for name, kind, a, b in zip(names, types, lo, hi):
-        if int(kind) != 3 or name == "domain_sky":
-            continue
-        walls.append((name, int(a), int(b)))
-    return walls
-
-
-def _node_cursor(nnodes, face_index: int) -> int:
-    cursor = 0
-    pos = 0
-    while pos < face_index:
-        take = min(2_000_000, face_index - pos)
-        cursor += int(nnodes[pos : pos + take].astype(np.int64).sum())
-        pos += take
-    return cursor
-
-
-def _face_geometry(mesh, min_id: int, max_id: int) -> tuple[np.ndarray, np.ndarray]:
-    """Centers and z-component of the face normal. nz > 0 points upwards."""
-    start = min_id - 1
-    count = max_id - min_id + 1
-    nn = mesh["meshes/1/faces/nodes/1/nnodes"]
-    nodes = mesh["meshes/1/faces/nodes/1/nodes"]
-    coords = mesh["meshes/1/nodes/coords/55702"]
-    counts = nn[start : start + count].astype(np.int64)
-    cursor = _node_cursor(nn, start)
-    total = int(counts.sum())
-    fnodes = nodes[cursor : cursor + total].astype(np.int64)
-    uniq, inv = np.unique(fnodes, return_inverse=True)
-    pts = np.asarray(coords[uniq - 1])[inv]
-    starts = np.zeros(count, dtype=np.int64)
-    if count > 1:
-        starts[1:] = np.cumsum(counts[:-1])
-    centers = np.add.reduceat(pts, starts) / counts[:, None]
-    # normal from the first three nodes; short faces get nz = 0
-    long = counts >= 3
-    i0 = starts
-    nvec = np.zeros((count, 3), dtype=np.float64)
-    a = pts[i0[long]]
-    b = pts[i0[long] + 1]
-    c = pts[i0[long] + 2]
-    nvec[long] = np.cross(b - a, c - a)
-    return centers, nvec[:, 2]
-
-
-def _centroids(mesh, min_id: int, max_id: int) -> np.ndarray:
-    """Face ids are 1-based and contiguous. Return centers, shape (n, 3)."""
-    start = min_id - 1
-    count = max_id - min_id + 1
-    nn = mesh["meshes/1/faces/nodes/1/nnodes"]
-    nodes = mesh["meshes/1/faces/nodes/1/nodes"]
-    coords = mesh["meshes/1/nodes/coords/55702"]
-    counts = nn[start : start + count].astype(np.int64)
-    cursor = _node_cursor(nn, start)
-    total = int(counts.sum())
-    fnodes = nodes[cursor : cursor + total].astype(np.int64)
-    uniq, inv = np.unique(fnodes, return_inverse=True)
-    pts = np.asarray(coords[uniq - 1])[inv]
-    starts = np.zeros(count, dtype=np.int64)
-    if count > 1:
-        starts[1:] = np.cumsum(counts[:-1])
-    acc = np.add.reduceat(pts, starts)
-    return acc / counts[:, None]
 
 
 def _bins(centers: np.ndarray, values: dict[str, np.ndarray], pitch: float) -> list[dict]:
@@ -125,28 +52,15 @@ def surface_maps(case: Path, pitch: float = 0.01) -> dict:
     dat = next(case.rglob("*.dat.h5"))
     surfaces = []
     with h5py.File(cas, "r") as mesh, h5py.File(dat, "r") as data:
-        walls = _face_ranges(mesh)
-        packed = 0
-        offsets = {}
-        for name, a, b in walls:
-            count = b - a + 1
-            if name in TARGETS:
-                offsets[name] = (packed, count, a, b)
-            packed += count
-        shear_n = int(data["results/1/phase-1/faces/SV_WALL_SHEAR/1"].shape[0])
-        if packed != shear_n:
-            raise RuntimeError(f"ściany {packed} nie zgadzają się z polem tarcia {shear_n}")
-
-        p_all = data["results/1/phase-1/faces/SV_P/1"]
-        yplus_all = data["results/1/phase-1/faces/SV_WALL_YPLUS/1"]
-        shear_all = data["results/1/phase-1/faces/SV_WALL_SHEAR/1"]
-
+        layout = {name: (packed_at, lo, hi) for name, packed_at, lo, hi in checked_layout(mesh, data)}
         for name, (code, label) in TARGETS.items():
-            packed_at, count, min_id, max_id = offsets[name]
-            centers = _centroids(mesh, min_id, max_id)
-            pressure = np.asarray(p_all[min_id - 1 : max_id])
-            yplus = np.asarray(yplus_all[packed_at : packed_at + count])
-            shear = np.asarray(shear_all[packed_at : packed_at + count])
+            packed_at, min_id, max_id = layout[name]
+            state = wall_state(mesh, data, packed_at, min_id, max_id)
+            count = max_id - min_id + 1
+            centers = state["centers"]
+            pressure = state["pressure"]
+            yplus = state["yplus"]
+            shear = state["tau"]
             shear_mag = np.linalg.norm(shear, axis=1)
             points = _bins(
                 centers,
@@ -180,7 +94,7 @@ def surface_maps(case: Path, pitch: float = 0.01) -> dict:
             "cp": "współczynnik ciśnienia. Ciśnienie manometryczne z pliku podzielone przez 0.5*1.225*15^2.",
             "cisnienie_Pa": "ciśnienie manometryczne na ściance, paskale.",
             "yplus": "y+ na ściance, bez jednostki.",
-            "naprezenie_x_Pa": "składowa X tarcia ścianki. Ujemna znaczy, że tarcie ciągnie do przodu, czyli przepływ przy ścianie jest cofnięty.",
+            "naprezenie_x_Pa": "składowa X tarcia, które płyn wywiera na ściankę, w paskalach. Dodatnia to normalny przepływ do tyłu auta. Ujemna znaczy, że przepływ przy ścianie jest cofnięty (oderwanie). Liczone z y+ i prędkości przy ścianie, bo zapisane w pliku tarcie ma odwrócony znak i złe jednostki.",
             "naprezenie_Pa": "długość wektora tarcia ścianki, paskale.",
         },
         "powierzchnie": surfaces,
@@ -247,21 +161,13 @@ def profile_sections(case: Path, band: float = 0.012) -> dict:
     dat = next(case.rglob("*.dat.h5"))
     wings = []
     with h5py.File(cas, "r") as mesh, h5py.File(dat, "r") as data:
-        walls = _face_ranges(mesh)
-        packed = 0
-        offsets = {}
-        for name, a, b in walls:
-            count = b - a + 1
-            if name in TARGETS:
-                offsets[name] = (packed, count, a, b)
-            packed += count
-        p_all = data["results/1/phase-1/faces/SV_P/1"]
-        shear_all = data["results/1/phase-1/faces/SV_WALL_SHEAR/1"]
+        layout = {name: (packed_at, lo, hi) for name, packed_at, lo, hi in checked_layout(mesh, data)}
         for name, (code, label) in TARGETS.items():
-            packed_at, count, min_id, max_id = offsets[name]
-            centers, nz = _face_geometry(mesh, min_id, max_id)
-            pressure = np.asarray(p_all[min_id - 1 : max_id]) / Q
-            tau = np.asarray(shear_all[packed_at : packed_at + count])[:, 0]
+            packed_at, min_id, max_id = layout[name]
+            state = wall_state(mesh, data, packed_at, min_id, max_id)
+            centers, nz = state["centers"], state["normal"][:, 2]
+            pressure = state["pressure"] / Q
+            tau = state["tau"][:, 0]
             cuts = []
             for y0 in _stations(centers[:, 1]):
                 sel = np.abs(centers[:, 1] - y0) <= band
