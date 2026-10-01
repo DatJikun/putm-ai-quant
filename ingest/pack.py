@@ -9,6 +9,7 @@ from ingest.balance import aero_balance
 from ingest.chatbot_brief import write_brief
 from ingest.car_layout import stamp_frames
 from ingest.cas_setup import parse_cas_setup
+from ingest.dat_monitors import read_dat_monitors
 from ingest.inventory import scan_folder
 from ingest.pictures import index_pictures
 from ingest.rfile import parse_rfiles
@@ -137,6 +138,8 @@ def _force_convergence(monitors: dict, setup: dict, balance: dict, balance_kwarg
     if not (stab["cx"] and stab["cz"]):
         out["reasons"].append("brak historii monitorów cx/cz")
         return out
+    if stab["cx"].get("proxy"):
+        return _proxy_convergence(out, stab)
     if out["windowIterations"] < 150:
         out["reasons"].append(f"za mało iteracji do oceny ({out['windowIterations']})")
         return out
@@ -149,6 +152,34 @@ def _force_convergence(monitors: dict, setup: dict, balance: dict, balance_kwarg
     shift = out["balanceShiftPp"]
     if shift is not None and abs(shift) > BALANCE_LIMIT_PP:
         out["reasons"].append(f"balans przesunął się o {shift:+.2f} pp w tym samym oknie")
+    out["settled"] = not out["reasons"]
+    return out
+
+
+def _half_from_mesh(cas_paths: list[Path]):
+    """True when the mesh has a symmetry plane. None when there is no .cas.h5 to look at."""
+    cas = [p for p in cas_paths if p.name.lower().endswith(".cas.h5")]
+    if not cas:
+        return None
+    import h5py
+
+    from ingest.h5_mesh import has_symmetry
+
+    with h5py.File(cas[-1], "r") as mesh:
+        return has_symmetry(mesh)
+
+
+def _proxy_convergence(out: dict, stab: dict) -> dict:
+    """Stability from the gap between the final instantaneous value and the run average (no -rfile.out)."""
+    out["source"] = "dat.h5: różnica między wartością chwilową a średnią z przebiegu (przybliżenie, bez historii)"
+    out["windowIterations"] = None
+    out["balanceShiftPp"] = None
+    for name in ("cx", "cz"):
+        gap = stab[name].get("driftPct")
+        if gap is not None and abs(gap) > DRIFT_LIMIT_PCT:
+            out["reasons"].append(
+                f"{name}: wartość chwilowa różni się od średniej o {gap:+.2f}% (limit {DRIFT_LIMIT_PCT}%), przepływ jeszcze się rusza"
+            )
     out["settled"] = not out["reasons"]
     return out
 
@@ -249,6 +280,10 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
     files = inventory["files"]
     transcripts = parse_transcripts(_abs(case_root, files["transcripts"])) if files["transcripts"] else {}
     reports = parse_rfiles(_abs(case_root, files["reports"])) if files["reports"] else {}
+    if not reports.get("monitors"):
+        dat_paths = [p for p in _abs(case_root, files["dat"]) if p.name.lower().endswith(".dat.h5")]
+        if dat_paths:
+            reports = read_dat_monitors(dat_paths[-1]) or {}
     setup = parse_cas_setup(_abs(case_root, files["cas"]))
     slices = load_slices()
     case_geom = _abs(case_root, files["geometryYaml"])
@@ -488,7 +523,10 @@ def build_pack(case_root: Path, out_dir: Path) -> dict:
         warnings.append("Brak vehicle.name w geometry.yaml — identity.vehicle ustawione na PM09.")
         vehicle_name = "PM09"
 
-    half = bool(transcripts.get("halfModel"))
+    half = transcripts.get("halfModel")
+    if half is None:
+        half = _half_from_mesh(_abs(case_root, files["cas"]))
+    half = bool(half)
     cz_note = (
         "cz z definicji raportu ma wektor (0, 0, -1): dodatnie cz to downforce. "
         "Cl fizyczny (Z w górę) = -cz. Cd = cx."

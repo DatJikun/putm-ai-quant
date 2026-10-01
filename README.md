@@ -86,7 +86,7 @@ Ingest działa całkowicie lokalnie, obok Twoich plików Fluent i CAD. Nie wymag
 ### Wymagania i instalacja
 
 ```bash
-pip install -r requirements.txt   # pyyaml, numpy, pillow, h5py, pytest
+pip install -r requirements.txt   # pyyaml, numpy, scipy, pillow, h5py, matplotlib, zarr (eksport do przeglądarki 3D), pytest
 # Opcjonalnie: cad_measure.py, step_cards.py i step_prep.py (bryły STEP)
 pip install cadquery-ocp
 ```
@@ -96,7 +96,7 @@ Bez `ocp` polecenie `pack` nie przerywa pracy: dopisuje ostrzeżenie i zostawia 
 ### Uruchomienie testów i kontroli
 
 ```bash
-python -m pytest        # ingest, ask
+python -m pytest        # ingest, ask, siły z plików, raport, przepływ, test siatki
 npm test                # adapter, silnik oceny, ask (TS), parser YAML, walidacja id packa
 npm run lint
 npm run typecheck       # next typegen + tsc --noEmit
@@ -110,6 +110,8 @@ To samo, plus `npm run build`, robi CI (`.github/workflows/ci.yml`). Testy weryf
 - Stabilność monitorów (dryf w ostatnim oknie, wczesne zatrzymanie) i treść `dla-chatbota.md`.
 - Obliczanie współrzędnych stacji w metrach z nazw klatek CFD-Post.
 - Zgodność odpowiedzi `ask` w Pythonie i TypeScripcie na wspólnych przypadkach (`tests/fixtures/ask-pack/cases.json`).
+- Pole wirowe: wir Lamba–Oseena jest znajdowany, czyste ścinanie przy ścianie nie jest wirem, ślady wirów łączą się między stacjami.
+- Reguły oceny w raporcie (zbieżność, residua, bilans masy, y+, siatka) i test niezależności od siatki na danych o znanym rzędzie zbieżności.
 
 ### Polecenia CLI ingestu
 
@@ -119,6 +121,15 @@ Wszystkie operacje wywołuje się przez moduł `ingest` (`python -m ingest <pole
 |---|---|---|
 | `inventory ROOT...` | Skanuje foldery, raportuje braki i typ (`full_case` / `mesh_only` / `incomplete`) | nic |
 | `pack ROOT [--out DIR]` | Składa pack: `aeropack.json`, `dla-chatbota.md`, `geometry.yaml`, `slices.yaml`, `inventory.json`, `images/index.json` | nic (`ocp` dla kart ze STEP) |
+| `report ROOT [--out DIR] [--bez-przeplywu] [--bez-obrazow]` | **Wszystko jednym poleceniem**: pack, residua, bilans masy, siły na części, y+, oderwania, skan przepływu. Zapisuje `SKROT.md`, `PELNY.md` (oraz `.html`), `WIARYGODNOSC.md`, `obrazy/galeria.html` i `raport.json` do `packs/<case>/` | `.cas.h5` + `.dat.h5` (bez nich liczy to, co się da, i zaznacza braki) |
+| `images ROOT [--out DIR] [--limit N]` | Obrazki przekrojów (Cp, Cpt, prędkość) w tych samych 150 płaszczyznach na oś co w CFD-Post, widoki Cp, tarcia i y+ na aucie oraz `galeria.html` z suwakiem | `.cas.h5` + `.dat.h5`, matplotlib |
+| `compare DIR DIR [DIR...] [--nazwy A,B]` | Porównanie dwóch lub więcej symulacji: tabele różnic, wykresy nałożone na siebie, macierz ocen, `POROWNANIE.html` | foldery paczek zrobione przez `report` |
+| `viewer ROOT [--out DIR] [--krok M]` | Eksport do przeglądarki 3D (CFD3DViewer): pole przepływu na siatce, powierzchnia auta z Cp, tarciem i y+, linie prądu, kamery. Folder `<nazwa>.viewer` | `.cas.h5` + `.dat.h5`, `zarr` |
+| `meta ROOT [--out DIR]` | **Metaplik**: folder `packs/<case>/meta/` z `meta.json` (wszystkie liczby, wnioski ze wskazaniem dowodu, pochodzenie każdej liczby) i mapami w dwóch rozdzielczościach (`powierzchnia_1cm.npz`, `powierzchnia_3mm.npz`) oraz `przekroje.npz` (150 płaszczyzn na oś). Zastępuje pliki CFD-Post i zdjęcia | `.cas.h5` + `.dat.h5` |
+| `meta-render META_DIR --out DIR [--powierzchnia 1cm\|3mm]` | Rysuje obrazki wyłącznie z map metapliku | folder metapliku |
+| `meta-verify META_DIR` | Sprawdza kompletność i sumy kontrolne metapliku | folder metapliku |
+| `conservation ROOT` | Residua (z trendem) i bilans masy po brzegach domeny, przepływ przez chłodnicę i wentylator, do `quant/<case>/zachowanie.json` | `.cas.h5` + `.dat.h5` |
+| `mesh-study PACK PACK [PACK]` | Test niezależności od siatki: różnice, rząd zbieżności, ekstrapolacja i GCI przy trzech siatkach. Ostrzega, gdy poza siatką coś się różni | 2–3 paczki tego samego bolidu |
 | `dump-forces ROOT [--procs N] [--journal-only]` | Journal TUI i (opcjonalnie) headless Fluent zrzucający siły per strefa | `.cas.h5`, Ansys Fluent |
 | `brief PACK_DIR` | Odtwarza `dla-chatbota.md` z gotowego `aeropack.json` | `aeropack.json` |
 | `ask PACK forces\|part\|device\|slice` | Jedna odpowiedź z paczki (`--part`, `--device`, `--axis`, `--station`, `--field`) | `aeropack.json`, `profile.json`, `geometry.yaml`, `images/index.json` zależnie od pytania |
@@ -135,13 +146,16 @@ Najczęstsze wywołania:
 # Inwentaryzacja folderu case'a (sprawdza .cas, .dat, .trn, .jou, raporty, zdjęcia)
 python -m ingest inventory "sciezka/do/folderu/case" --out packs
 
+# Najkrótsza droga: jeden folder, jedno polecenie, nic do wpisywania ani klikania
+python -m ingest report "sciezka/do/folderu/case" --out packs/NAZWA_CASE
+
 # Kompletny pack (residuale, siły, balans, siatka, indeks zdjęć, geometria)
 python -m ingest pack "sciezka/do/folderu/case" --out packs/NAZWA_CASE
 
 # Profile Cp na płatach, żeby narzędzie `part` miało dane
 python -m ingest profiles "sciezka/do/folderu/case" --out packs/NAZWA_CASE/profile.json
 
-# Headless zrzut sił ścian, gdy monitor cz nie ma per-zone
+# Headless zrzut sił ścian, gdy monitor cz nie ma per-zone (`report` liczy je już sam z plików, ten krok jest zapasowy)
 python -m ingest dump-forces "sciezka/do/folderu/case" --journal-only   # tylko journal .jou
 python -m ingest dump-forces "sciezka/do/folderu/case" --procs 4         # odpal Fluenta
 ```
@@ -149,6 +163,62 @@ python -m ingest dump-forces "sciezka/do/folderu/case" --procs 4         # odpal
 Porównanie dwóch runów: `python -m ingest diff packs/BASE/aeropack.json packs/NOWY/aeropack.json`.
 
 Narzędzie pomocnicze poza CLI: `python -m ingest.step_prep MODEL.STEP --out MODEL_half.STEP [--dry]` przygotowuje połówkę STEP dla SpaceClaim (nazwane grupy, domena, wentylator i chłodnica wyjęte). Domyślne ścieżki w tym skrypcie są ustawione pod komputer zespołu, więc podawaj je jawnie.
+
+### Raport jednym poleceniem i liczby zamiast zdjęć
+
+`python -m ingest report ROOT` robi całą analizę sam. Nic nie trzeba wpisywać. Brakujące dane są w raporcie na czerwono, a nie cichym pustym polem. Opis dla człowieka jest w `JAK-TO-DZIALA.md`. Wychodzą pliki:
+
+- `SKROT.md` / `.html`: jedna strona z werdyktem, liczbami, tym, skąd biorą się siły, i tym, na co uważać,
+- `PELNY.md` / `.html`: wszystko (dodatki A–I: strefy, siły wzdłuż auta, przekroje, wiry, residua, ustawienia, wiarygodność, metoda, słowniczek),
+- `WIARYGODNOSC.md`: ocena 0–100 z wagami i źródłami,
+- `obrazy/galeria.html`: przekroje w płaszczyznach CFD-Post,
+- `raport.json`, `aeropack.json`, `dla-chatbota.md`.
+
+Liczby pochodzą z plików wyników (`.cas.h5` + `.dat.h5`), bez Fluenta i bez oglądania zdjęć:
+
+- siły na każdą część bolidu i ich rozkład wzdłuż auta (pasy po 10 cm),
+- y+, wysokość pierwszej komórki i miejsca z cofniętym przepływem (oderwania),
+- strata ciśnienia całkowitego w przekrojach co 10 cm, z przypisaniem do części, która tam robi opór,
+- wiry (położenie, cyrkulacja, kierunek obrotu), ich ślady od przekroju do przekroju, ślad za kołami,
+- bilans masy, przepływ przez chłodnicę, residua.
+
+**Tryb tylko z plików modelu.** Logi `.trn`, pliki `.out`, `.wft` i zdjęcia nie są wymagane. Gdy ich brak, program liczy zamiast nich z `.cas.h5` i `.dat.h5` i oznacza, co jest przybliżeniem:
+
+| Czego brakuje | Z czego liczone zamiast tego |
+|---|---|
+| `.out` (historia sił) | różnica między końcową wartością chwilową a średnią z `.dat.h5`. Pełny dryf w ostatnich 200 iteracjach wymaga `.out`, bo tabela 100 próbek w `.dat.h5` nie jest prawdziwą historią |
+| `.trn` (residua) | historia residuów z `.dat.h5`, wartość znormalizowana jak w logu |
+| `.trn` (liczba komórek, połowa auta) | liczba komórek z pola, połowa auta po płaszczyźnie symetrii w siatce |
+| `.trn` (jakość siatki) | przybliżenie z geometrii, przesadza w spłaszczonych komórkach |
+| `.wft` (warstwy przyścienne) | wysokość pierwszej komórki zmierzona z siatki |
+| zdjęcia CFD-Post | własne obrazki w tych samych płaszczyznach |
+| `.trn` (awarie, przerwania) | nie da się zastąpić, raport mówi, że tego nie wie |
+
+`.scdoc` jest zamkniętym formatem i nie jest czytany (geometria z `.step`). `.cdat` to ten sam wynik w starszym formacie, więc nie jest potrzebny.
+
+Dwie rzeczy, o których warto wiedzieć:
+
+- **Tarcie przy ścianie jest odtwarzane, a nie czytane z `SV_WALL_SHEAR`.** To pole w plikach wyników ma odwrócony znak (to siła ściany na płyn) i jednostki, które nie są paskalami. Siła tarcia jest liczona z y+ opartego na prędkości tarcia i odległości pierwszej komórki: `tau = mu² y+² / (rho y²)`. Sprawdzone na Baseline002: suma sił zgadza się z monitorem Fluenta co do 0,02%.
+- **Wiry są szukane siłą wirowania w płaszczyźnie przekroju**, a nie samą wirowością, bo ta druga jest też w warstwach przyściennych.
+
+**Wiarygodność.** `WIARYGODNOSC.md` ocenia, jak wykonano symulację (zbieżność, siatka, ściana, ruchoma podłoga, obrót kół, rozmiar domeny, model turbulencji) i czy wyniki leżą w zakresie z literatury. Każde sprawdzenie ma wagę i źródło (Menter 1994, dokumentacja ANSYS, Celik i in. 2008, Katz 2006, Gupta i Saxena 2017 i inne, patrz `ingest/credibility.py`). Zgodność z rzeczywistością jest oceniana tylko wtedy, gdy obok symulacji leży `pomiary.json` (`CdA_m2`, `ClA_m2`, `przod_masa_pct`, `zrodlo`). Progi to praktyka, a nie normy.
+
+**Przeglądarka 3D.** `python -m ingest viewer ROOT` zapisuje folder `<nazwa>.viewer` w formacie projektu CFD3DViewer (pole na siatce 2 cm, powierzchnia scalona do 4 mm, linie prądu policzone z pola prędkości, presety kamer). Wiewer wczytuje foldery `*.viewer` z jednego katalogu. Format sprawdzony walidatorem wiewera (`CFD3D_SRC=<ścieżka do src wiewera> python -m pytest tests/test_viewer_export.py`).
+
+Wyniki pośrednie lądują w `quant/<case>/` (poza gitem). Środki komórek, których solver nie zapisuje, są liczone raz i trzymane w `quant/<case>/.cache/`.
+
+### Metaplik: jedno miejsce z wszystkim zamiast CFD-Post i zdjęć
+
+`python -m ingest meta ROOT` zapisuje `packs/<case>/meta/`:
+
+| Plik | Co zawiera | Rozmiar (Baseline002) |
+|---|---|---|
+| `meta.json` | wszystkie liczby, ocena wiarygodności, **wnioski** posortowane wg wagi (każdy ze wskazaniem, gdzie w pliku jest dowód), **pochodzenie** każdej części (skąd i czy dokładne, czy przybliżenie), opis map, cała paczka `aeropack.json` i cały raport | 0,25 MB |
+| `powierzchnia_1cm.npz` | Cp, tarcie przy ścianie, y+ i cofnięty przepływ na ścianach auta, jedna wartość na kostkę 1 cm | 0,9 MB |
+| `powierzchnia_3mm.npz` | to samo w kostkach 3 mm (widać szczeliny między klapami) | 5,6 MB |
+| `przekroje.npz` | Cp, Cpt i prędkość względna w tych samych 150 płaszczyznach na oś co CFD-Post, siatka 2 cm | 11,4 MB |
+
+Razem 18 MB zamiast 7,6 GB. Pozycje w mapach to całkowite indeksy kostek (dokładne co do kostki), wartości w połowie precyzji. `meta-render` rysuje z nich obrazki bez żadnego innego pliku, a `meta-verify` sprawdza sumy kontrolne, więc zdjęć z CFD-Post nie trzeba trzymać. Wczytanie w Pythonie: `ingest.metapack.load_meta`, `load_surface`, `load_planes`.
 
 ### Odpowiedzi na pytania agenta: `ask`, MCP i HTTP
 
@@ -235,3 +305,36 @@ W symulacjach symetrii (pół bolidu, jazda na wprost) recenzent trzyma się twa
 
 - **Backend / Ingest**: Python 3.11+, OpenCASCADE (`OCP`), PyYAML, pytest.
 - **Frontend**: Next.js 16 (Turbopack, App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Lucide Icons.
+
+---
+
+## 7. Plan na przyszłość
+
+Rzeczy, których jeszcze nie ma, w przybliżonej kolejności.
+
+### Zakręt, kąt znoszenia i różne prędkości
+
+Dziś jeden typ case'a: połowa auta, jazda na wprost, 15 m/s. Telemetria z przejazdów (patrz niżej) pokazuje, że bolid jeździ głównie 10–16 m/s, dochodzi do ok. 23 m/s, a szacowany kąt znoszenia mieści się w ±2,3° przez 90% czasu, maksymalnie ok. 4,5°. Do zrobienia po stronie symulacji i narzędzi:
+
+- symulacje w zakręcie (obrócony układ odniesienia albo krzywa domena) i pełny bolid zamiast połowy, bo w zakręcie nie ma symetrii,
+- mapa prędkość × kąt znoszenia × wysokość zawieszenia zamiast jednego case'a; docisk rośnie z kwadratem prędkości, więc przynajmniej 10, 15 i 20 m/s oraz jeden przypadek ok. 3–4°,
+- `report` i `diff` muszą wtedy porównywać paczki po parametrach case'a, a nie zakładać jeden,
+- po pojawieniu się case'a z kątem: wykrywanie kąta z `.cas` (dziś `yawDeg` jest stałą 0), a `Cs` zacznie mieć sens.
+
+### Telemetria z przejazdów (`.mcap`) jako rzeczywistość do porównania z CFD
+
+Nagrania z rejestratora (ROS 2, `.mcap`) są jedynym źródłem prawdy z toru. Wstępnie sprawdzone:
+
+- odczyt bez Foxglove: biblioteka `mcap` plus własny dekoder schematów IDL; działa na całych plikach i na samych początkach pliku,
+- prędkość, kąt znoszenia i obciążenia kół szacuje algorytm sterownika (`/yaw_ref`), to nie jest pomiar. Suma obciążeń kół jest stała (2943 N), więc docisku aerodynamicznego z niej nie widać,
+- **kierownica** jest w `/putm_vcl/steering_wheel` w nagraniach od 2.07.2026. W nagraniach z 29.06.2026 skręt jest w `frontbox_driver_input`,
+- **ugięcie przedniego zawieszenia** (`frontbox_data`) ma wartości tylko w nagraniach z 29.06.2026 (11 przejazdów, do 24 m/s). Od 2.07 jest zerowe, tak samo jak licznik okrążeń. GPS nie jest zapisywany w ogóle. Odczyt jest w surowych jednostkach, bez kalibracji do milimetrów. Z prędkością rośnie tylko pozornie: w wybiegu (bez momentu i bez hamowania) jest dokładnie stały przy każdej prędkości do 21 m/s, a zmienia się z zakrętem (przy przyspieszeniu bocznym powyżej 3 m/s² skacze) i z napędem. **Docisku aerodynamicznego z niego nie wyciągnąć.** Do tego potrzebny jest skalibrowany pomiar wysokości zawieszenia i przejazdy ze stałą prędkością po prostej,
+- opór z wybiegu (zwalnianie bez gazu i hamulca) daje 1,5–2,1 m² powierzchni oporu przy CFD 1,2–1,6 m². Rozrzut między kierowcami jest za duży na wnioski, bo w pomiarze siedzi też opór silników i opon.
+
+Do zrobienia: narzędzie `telemetry` czytające nagranie, rozkład prędkości i kąta znoszenia, wybieg, ugięcie zawieszenia względem prędkości, oraz włączenie zapisu zawieszenia, kierownicy i GPS w rejestratorze przed następnymi testami.
+
+### Dalsze pomysły
+
+- `search_transcript(regex)` w `ask` i MCP (jedyne brakujące narzędzie z pierwotnego planu),
+- więcej niż jedna paczka naraz w UI (porównanie `diff` obok siebie),
+- rzędy zbieżności dla pól (nie tylko dla sił) w `mesh-study`.

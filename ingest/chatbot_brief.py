@@ -34,6 +34,7 @@ def render_brief(pack: dict) -> str:
         _convergence(pack),
         _setup(pack),
         _parts(pack),
+        _flow(pack),
         _warnings(pack),
         _rules(pack),
         _glossary(),
@@ -486,6 +487,47 @@ def _parts(pack: dict) -> str:
             ])
             + " |"
         )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _flow(pack: dict) -> str:
+    flow = pack.get("flowSummary")
+    lines = ["## Przepływ wokół auta", ""]
+    if not isinstance(flow, dict):
+        lines.append("Skanu przepływu nie ma w tej paczce. Odpal: python -m ingest report <folder case>.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append(
+        "Liczby z przekrojów w poprzek auta co 10 cm, policzone z komórek solvera. "
+        "Strata to ubytek ciśnienia całkowitego (m²): tam, gdzie powietrze straciło energię, rośnie. x rośnie do tyłu auta."
+    )
+    lines.append("")
+    behind = flow.get("lossBehindCar") or {}
+    if behind:
+        lines.append(f"- Za autem (x = {_metres(behind.get('x_m'))}) strata całkowita to {_coeff(behind.get('integralM2'))} m², ślad zajmuje {_coeff(behind.get('areaM2'))} m².")
+    for item in flow.get("lossGrowth") or []:
+        by = f", opór w tym pasie robi głównie: {_text(item.get('dragMostlyFrom'))}" if item.get("dragMostlyFrom") else ""
+        lines.append(f"- Strata rośnie o {_coeff(item.get('growthM2'))} m² między x = {_metres(item.get('fromX_m'))} a {_metres(item.get('toX_m'))}{by}.")
+    tracks = flow.get("vortexTracks") or []
+    if tracks:
+        lines += ["", "Najsilniejsze wiry. Cyrkulacja w m²/s, im większa, tym silniejszy wir. Kierunek obrotu patrząc na auto od przodu.", "", "| Od x do x | Gdzie powstaje | Obrót | Najsilniejszy przy x | Cyrkulacja |", "| --- | --- | --- | --- | --- |"]
+        for t in tracks:
+            lines.append(
+                f"| {_metres(t.get('fromX_m'))} → {_metres(t.get('toX_m'))} | {_cell(_text(t.get('region')))} | {_cell(_text(t.get('turn')))} | "
+                f"{_metres(t.get('strongestAtX_m'))} | {_coeff(abs(t['peakCirculationM2s'])) if isinstance(t.get('peakCirculationM2s'), (int, float)) else BRAK} |"
+            )
+    wakes = flow.get("wheelWakes") or {}
+    wake_lines = []
+    for name, label in (("front", "przednim"), ("rear", "tylnym")):
+        w = wakes.get(name)
+        if w:
+            wake_lines.append(f"- Za kołem {label}: strata w oknie koła {_coeff(w.get('lossIntegralM2'))} m² przy x = {_metres(w.get('atX_m'))}, szerokość śladu {_metres(w.get('widthM'))}.")
+    if wake_lines:
+        lines += [""] + wake_lines
+    back = flow.get("reverseFlow")
+    if back:
+        lines += ["", f"- Przepływ cofnięty (u < 0 względem auta) na x = {_metres(back.get('fromX_m'))} do {_metres(back.get('toX_m'))}, najwięcej przy x = {_metres(back.get('atX_m'))} ({_coeff(back.get('maxAreaM2'))} m²)."]
     lines.append("")
     return "\n".join(lines)
 

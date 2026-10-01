@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ingest.h5_mesh import node_coords
+
 # Clip to the car, not the whole wind tunnel.
 BOX = {"x": (-1.6, 3.2), "y": (-1.3, 0.15), "z": (-0.5, 1.6)}
 Q = 0.5 * 1.225 * 15.0 ** 2
@@ -100,7 +102,7 @@ def slice_grid(
     ax = "xyz".index(axis)
 
     with h5py.File(cas, "r") as mesh, h5py.File(dat, "r") as data:
-        coords = mesh["meshes/1/nodes/coords/55702"]
+        coords = node_coords(mesh)
         n_nodes = int(coords.shape[0])
         near = np.zeros(n_nodes + 1, dtype=bool)
         step = 2_000_000
