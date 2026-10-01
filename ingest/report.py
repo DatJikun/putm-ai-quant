@@ -197,6 +197,62 @@ def attach_walls(pack: dict, walls: dict) -> None:
     pack["warnings"] = [w for w in pack.get("warnings", []) if not w.startswith("Monitor cz ma per-zone")]
 
 
+# --------------------------------------------------------- fields the UI reads
+
+RESIDUAL_NAMES = {"continuity": "continuity", "x-velocity": "xMomentum", "y-velocity": "yMomentum", "z-velocity": "zMomentum", "k": "k", "epsilon": "epsilon", "omega": "omega"}
+
+
+def attach_solver_fields(pack: dict, conservation: dict, walls: dict | None) -> None:
+    """Put residuals and y+ into `monitors`, where the workbench looks for them, unless a log already did."""
+    monitors = pack.setdefault("monitors", {})
+    res = (conservation or {}).get("residuals")
+    if res and not monitors.get("residuals"):
+        monitors["residuals"] = {"iteration": res["iterations"], "source": "dat.h5"} | {
+            RESIDUAL_NAMES[name]: rec["final"] for name, rec in res["equations"].items() if name in RESIDUAL_NAMES
+        }
+    if walls and not monitors.get("yPlus"):
+        zones = walls.get("zones") or {}
+
+        def merge(groups: tuple[str, ...]) -> dict | None:
+            rows = [z for z in zones.values() if z.get("group") in groups and z.get("yplus")]
+            if not rows:
+                return None
+            area = sum(z["areaM2"] for z in rows)
+            return {
+                "min": min(z["yplus"]["min"] for z in rows),
+                "avg": round(sum((z["yplus"].get("mean") or z["yplus"]["median"]) * z["areaM2"] for z in rows) / area, 3),
+                "max": max(z["yplus"]["max"] for z in rows),
+            }
+
+        block = {"wings": merge(("fw", "rw")), "floor": merge(("floor",)), "source": "dat.h5"}
+        if block["wings"] or block["floor"]:
+            monitors["yPlus"] = block
+
+
+# ----------------------------------------------------------------- mesh from files
+
+def mesh_analysis(case_root: Path, pack: dict, cache_dir: Path, quality: bool = True) -> dict | None:
+    """Cell count and an approximate orthogonal quality, measured from the mesh when there is no log."""
+    cas = next(iter(case_root.rglob("*.cas.h5")), None)
+    dat = next(iter(case_root.rglob("*.dat.h5")), None)
+    if cas is None:
+        return None
+    mesh = pack.setdefault("mesh", {})
+    if not mesh.get("cells") and dat is not None:
+        import h5py
+
+        with h5py.File(dat, "r") as data:
+            mesh["cells"] = int(data["results/1/phase-1/cells/SV_P/1"].shape[0])
+            mesh["cellsSource"] = "dat.h5"
+    if not quality or mesh.get("minOrthogonalQuality") is not None:
+        return None
+    from ingest.mesh_quality import measure
+
+    result = measure(cas, cache_dir / "cell_centers.npy")
+    mesh["orthogonalQualityApprox"] = result
+    return result
+
+
 # ---------------------------------------------------------------------- checks
 
 def _check(cid: str, title: str, status: str, value: str, detail: str) -> dict:
@@ -309,26 +365,60 @@ def check_mesh_quality(pack: dict) -> dict:
     title = "Jakość siatki"
     ortho = _num(_get(pack, "mesh", "minOrthogonalQuality"))
     cells = _num(_get(pack, "mesh", "cells"))
+    count_text = (f"{int(cells):,}".replace(",", " ") + " komórek. ") if cells else ""
     if ortho is None:
-        return _check("siatka", title, NONE, "brak", "Brak transkryptu siatki, więc nie znamy jakości najgorszej komórki.")
+        approx = _get(pack, "mesh", "orthogonalQualityApprox")
+        if not approx:
+            return _check("siatka", title, NONE, "brak", count_text + "Brak logu siatkowania ani policzonej jakości, więc nie znamy najgorszej komórki.")
+        below = approx["facesBelow"]
+        bad, poor = below.get("0.01", 0), below.get("0.1", 0)
+        total = approx.get("faces") or 1
+        status = WARN if bad else OK
+        detail = (
+            f"{count_text}Przybliżenie z geometrii (nie z logu): {bad} ścianek z jakością poniżej 0,01 i {poor} poniżej 0,1 na " + f"{total:,}".replace(",", " ")
+            + f". Najgorsze miejsce: x={approx['worstAtM'][0]}, y={approx['worstAtM'][1]}, z={approx['worstAtM'][2]} m. "
+            "To jest oszacowanie, które przesadza w skrajnych, spłaszczonych komórkach (np. przy styku opony z ziemią), więc sprawdź ten punkt w siatce."
+        )
+        return _check("siatka", title, status, f"{bad} poniżej 0,01 (przybliżenie)", detail)
     status = OK if ortho >= ORTHO_OK else WARN if ortho >= ORTHO_WARN else BAD
     aspect = _num(_get(pack, "mesh", "maxAspectRatio"))
-    detail = (f"{int(cells):,}".replace(",", " ") + " komórek. ") if cells else ""
-    detail += f"Najgorsza komórka ma jakość ortogonalną {ortho}"
+    detail = count_text + f"Najgorsza komórka ma jakość ortogonalną {ortho}"
     if aspect:
         detail += f", największe wydłużenie {aspect:.0f}"
     return _check("siatka", title, status, f"{ortho:.3f}", detail + ". Zalecane powyżej 0,1.")
 
 
-def check_boundary_layers(pack: dict) -> dict:
-    title = "Warstwy przyścienne w aktualnym stanie"
+def check_boundary_layers(pack: dict, walls: dict | None = None) -> dict:
+    title = "Warstwy przyścienne"
     bl = _get(pack, "mesh", "boundaryLayers")
+    measured = _measured_first_cells(walls)
     if not bl:
-        return _check("warstwy", title, NONE, "brak", "Brak pliku .wft, więc nie znamy przepisu na warstwy przyścienne.")
+        if measured:
+            return _check("warstwy", title, OK, measured["short"], "Brak pliku .wft, więc to pomiar z siatki: wysokość pierwszej komórki przy ścianie. " + measured["long"])
+        return _check("warstwy", title, NONE, "brak", "Brak pliku .wft i brak pól wyników, więc nie znamy warstw przyściennych.")
     stale = bl.get("staleControls") or []
+    extra = (" Pomiar z siatki: " + measured["long"]) if measured else ""
     if stale:
-        return _check("warstwy", title, WARN, f"nieaktualne: {', '.join(stale)}", "Przepis w .wft jest oznaczony jako nieaktualny. To zapis ustawień, a nie pomiar warstw w gotowej siatce.")
-    return _check("warstwy", title, OK, "aktualne", "Przepis na warstwy jest zgodny z siatką.")
+        return _check("warstwy", title, WARN, f"nieaktualne: {', '.join(stale)}", "Przepis w .wft jest oznaczony jako nieaktualny. To zapis ustawień, a nie pomiar warstw w gotowej siatce." + extra)
+    return _check("warstwy", title, OK, "aktualne", "Przepis na warstwy jest zgodny z siatką." + extra)
+
+
+def _measured_first_cells(walls: dict | None) -> dict | None:
+    rows = []
+    for name, rec in ((walls or {}).get("zones") or {}).items():
+        if rec.get("group") in SURFACE_GROUPS and rec.get("firstCellHeightM"):
+            rows.append((rec["group"], rec["firstCellHeightM"]["median"], rec["areaM2"]))
+    if not rows:
+        return None
+    by_group: dict[str, list[tuple[float, float]]] = {}
+    for group, median, area in rows:
+        by_group.setdefault(group, []).append((median, area))
+    parts = []
+    for group, items in by_group.items():
+        area = sum(a for _, a in items)
+        parts.append(f"{PART_NAMES[group]} {1e6 * sum(m * a for m, a in items) / area:.0f} µm")
+    overall = 1e6 * sum(m * a for _, m, a in rows) / sum(a for _, _, a in rows)
+    return {"short": f"pierwsza komórka ok. {overall:.0f} µm", "long": "Wysokość pierwszej komórki: " + ", ".join(parts) + "."}
 
 
 def check_run_health(pack: dict) -> dict:
@@ -367,7 +457,7 @@ def evaluate_checks(pack: dict, conservation: dict, walls: dict | None) -> list[
         check_checksum(walls),
         check_yplus(pack, walls),
         check_mesh_quality(pack),
-        check_boundary_layers(pack),
+        check_boundary_layers(pack, walls),
         check_run_health(pack),
         check_force_convention(pack),
     ]
@@ -396,19 +486,19 @@ def missing_data(pack: dict, conservation: dict, walls: dict | None) -> list[str
     if not files.get("dat"):
         gaps.append("Brak pliku .dat: nie ma pól do analizy ani residuów.")
     if not files.get("transcripts"):
-        gaps.append("Brak logu solvera (.trn): nie znamy jakości siatki, awarii ani przebiegu liczenia.")
+        gaps.append("Brak logu solvera (.trn): nie znamy awarii ani przerwań liczenia (jakość siatki i residua są liczone z plików).")
     if not _get(pack, "monitors", "monitors"):
         gaps.append("Brak monitorów cx, cz, cm (pliki -rfile.out): nie da się ocenić zbieżności sił.")
     if not files.get("cad"):
         gaps.append("Brak geometrii STEP: wymiary skrzydeł pochodzą z szablonu, a nie z tego bolidu.")
-    if not _get(pack, "mesh", "boundaryLayers"):
-        gaps.append("Brak pliku .wft: nie znamy przepisu na warstwy przyścienne.")
+    if not _get(pack, "mesh", "boundaryLayers") and not _measured_first_cells(walls):
+        gaps.append("Brak pliku .wft i brak pól wyników: nie znamy warstw przyściennych.")
     if not files.get("journals"):
         gaps.append("Brak journala .jou: ustawień nie da się odtworzyć 1:1, są tylko zapisane w logu.")
     if not _get(pack, "images", "total"):
         gaps.append("Brak zdjęć z CFD-Post: nie ma indeksu klatek.")
-    if _get(pack, "mesh", "minOrthogonalQuality") is None:
-        gaps.append("Brak jakości siatki: potrzebny transkrypt generowania siatki.")
+    if _get(pack, "mesh", "minOrthogonalQuality") is None and not _get(pack, "mesh", "orthogonalQualityApprox"):
+        gaps.append("Brak jakości siatki: potrzebny log siatkowania albo plik .cas.h5.")
     if not _get(pack, "methods", "turbulence"):
         gaps.append("Nie odczytano modelu turbulencji.")
     if walls is None:
@@ -758,7 +848,8 @@ def render_markdown(report: dict) -> str:
 
 # ------------------------------------------------------------------------ main
 
-def build_report(case_root: Path, out_dir: Path, *, flow: bool = True, cache_dir: Path | None = None) -> dict:
+def build_report(case_root: Path, out_dir: Path, *, flow: bool = True, images: bool = True, cache_dir: Path | None = None, mesh_study: dict | None = None) -> dict:
+    cache = cache_dir or Path("quant") / case_root.name / ".cache"
     case_root = case_root.resolve()
     out_dir = out_dir.resolve()
     pack = build_pack(case_root, out_dir)
@@ -766,10 +857,12 @@ def build_report(case_root: Path, out_dir: Path, *, flow: bool = True, cache_dir
     walls = wall_analysis(case_root, pack)
     if walls is not None:
         attach_walls(pack, walls)
-    flow_data = flow_analysis(case_root, pack, cache_dir or Path("quant") / case_root.name / ".cache") if flow else None
+    attach_solver_fields(pack, conservation, walls)
+    mesh_analysis(case_root, pack, cache, quality=flow)
+    flow_data = flow_analysis(case_root, pack, cache) if flow else None
     if flow_data is not None:
         pack["flowSummary"] = flow_summary(flow_data, walls)
-    if walls is not None or flow_data is not None:
+    if walls is not None or flow_data is not None or pack.get("mesh", {}).get("orthogonalQualityApprox"):
         (out_dir / "aeropack.json").write_text(json.dumps(pack, indent=2, ensure_ascii=False), encoding="utf-8")
         write_brief(pack, out_dir)
     checks = evaluate_checks(pack, conservation, walls)
@@ -784,6 +877,43 @@ def build_report(case_root: Path, out_dir: Path, *, flow: bool = True, cache_dir
         "flow": flow_data,
         "pack": pack,
     }
+    from ingest.credibility import assess, domain_extent, load_measurements, render as render_credibility
+
+    cas_files = list(case_root.rglob("*.cas.h5"))
+    domain = domain_extent(cas_files[0]) if cas_files else None
+    report["credibility"] = assess(report, domain=domain, mesh_study=mesh_study, measured=load_measurements(case_root))
+    report["domain"] = domain
+    (out_dir / "WIARYGODNOSC.md").write_text(render_credibility(report["credibility"], (pack.get("identity") or {}).get("caseId") or case_root.name), encoding="utf-8")
+    if flow and images and flow_data is not None:
+        report["images"] = _render_images(case_root, pack, out_dir / "obrazy", cache)
+    from ingest.documents import markdown_to_html, render_full, render_short
+
     (out_dir / "raport.json").write_text(json.dumps({k: v for k, v in report.items() if k != "pack"}, ensure_ascii=False, indent=1), encoding="utf-8")
-    (out_dir / "raport.md").write_text(render_markdown(report), encoding="utf-8")
+    name = (pack.get("identity") or {}).get("caseId") or case_root.name
+    for file, text, title in (("SKROT", render_short(report), f"{name}: skrót"), ("PELNY", render_full(report), f"{name}: pełny raport")):
+        (out_dir / f"{file}.md").write_text(text, encoding="utf-8")
+        (out_dir / f"{file}.html").write_text(markdown_to_html(text, title), encoding="utf-8")
     return report
+
+
+def _render_images(case_root: Path, pack: dict, out_dir: Path, cache: Path) -> dict | None:
+    """Plane pictures at the CFD-Post positions plus wall views. Skipped quietly without field data."""
+    refs = references(pack)
+    if refs is None:
+        return None
+    from ingest.plane_images import render_all
+    from ingest.slices import load_slices
+
+    index_file = out_dir.parent / "images" / "index.json"
+    index = json.loads(index_file.read_text(encoding="utf-8")) if index_file.exists() else None
+    return render_all(
+        case_root,
+        out_dir,
+        rho=refs["rho"],
+        mu=refs["mu"],
+        speed_ms=refs["speed_ms"],
+        template=load_slices(),
+        images_index=index if index and index.get("total") else None,
+        cache_dir=cache,
+        title=f"Przekroje przepływu: {(pack.get('identity') or {}).get('caseId') or case_root.name}",
+    )

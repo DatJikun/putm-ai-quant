@@ -108,6 +108,8 @@ def wall_state(mesh, data, packed_at: int, a: int, b: int, *, rho: float = AIR_R
         "tau": direction * tau_magnitude[:, None],
         "yplus": yplus,
         "uTan": u_tan,
+        "firstCell": first_cell,
+        "wallVelocity": moving,
     }
 
 

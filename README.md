@@ -86,7 +86,7 @@ Ingest działa całkowicie lokalnie, obok Twoich plików Fluent i CAD. Nie wymag
 ### Wymagania i instalacja
 
 ```bash
-pip install -r requirements.txt   # pyyaml, numpy, scipy, pillow, h5py, pytest
+pip install -r requirements.txt   # pyyaml, numpy, scipy, pillow, h5py, matplotlib, zarr (eksport do przeglądarki 3D), pytest
 # Opcjonalnie: cad_measure.py, step_cards.py i step_prep.py (bryły STEP)
 pip install cadquery-ocp
 ```
@@ -121,7 +121,10 @@ Wszystkie operacje wywołuje się przez moduł `ingest` (`python -m ingest <pole
 |---|---|---|
 | `inventory ROOT...` | Skanuje foldery, raportuje braki i typ (`full_case` / `mesh_only` / `incomplete`) | nic |
 | `pack ROOT [--out DIR]` | Składa pack: `aeropack.json`, `dla-chatbota.md`, `geometry.yaml`, `slices.yaml`, `inventory.json`, `images/index.json` | nic (`ocp` dla kart ze STEP) |
-| `report ROOT [--out DIR] [--bez-przeplywu]` | **Wszystko jednym poleceniem**: pack, residua, bilans masy, siły na części, y+, oderwania, skan przepływu. Zapisuje `raport.md` (z oceną i listą braków) i `raport.json` do `packs/<case>/` | `.cas.h5` + `.dat.h5` (bez nich liczy to, co się da, i zaznacza braki) |
+| `report ROOT [--out DIR] [--bez-przeplywu] [--bez-obrazow]` | **Wszystko jednym poleceniem**: pack, residua, bilans masy, siły na części, y+, oderwania, skan przepływu. Zapisuje `SKROT.md`, `PELNY.md` (oraz `.html`), `WIARYGODNOSC.md`, `obrazy/galeria.html` i `raport.json` do `packs/<case>/` | `.cas.h5` + `.dat.h5` (bez nich liczy to, co się da, i zaznacza braki) |
+| `images ROOT [--out DIR] [--limit N]` | Obrazki przekrojów (Cp, Cpt, prędkość) w tych samych 150 płaszczyznach na oś co w CFD-Post, widoki Cp, tarcia i y+ na aucie oraz `galeria.html` z suwakiem | `.cas.h5` + `.dat.h5`, matplotlib |
+| `compare DIR DIR [DIR...] [--nazwy A,B]` | Porównanie dwóch lub więcej symulacji: tabele różnic, wykresy nałożone na siebie, macierz ocen, `POROWNANIE.html` | foldery paczek zrobione przez `report` |
+| `viewer ROOT [--out DIR] [--krok M]` | Eksport do przeglądarki 3D (CFD3DViewer): pole przepływu na siatce, powierzchnia auta z Cp, tarciem i y+, linie prądu, kamery. Folder `<nazwa>.viewer` | `.cas.h5` + `.dat.h5`, `zarr` |
 | `conservation ROOT` | Residua (z trendem) i bilans masy po brzegach domeny, przepływ przez chłodnicę i wentylator, do `quant/<case>/zachowanie.json` | `.cas.h5` + `.dat.h5` |
 | `mesh-study PACK PACK [PACK]` | Test niezależności od siatki: różnice, rząd zbieżności, ekstrapolacja i GCI przy trzech siatkach. Ostrzega, gdy poza siatką coś się różni | 2–3 paczki tego samego bolidu |
 | `dump-forces ROOT [--procs N] [--journal-only]` | Journal TUI i (opcjonalnie) headless Fluent zrzucający siły per strefa | `.cas.h5`, Ansys Fluent |
@@ -160,21 +163,44 @@ Narzędzie pomocnicze poza CLI: `python -m ingest.step_prep MODEL.STEP --out MOD
 
 ### Raport jednym poleceniem i liczby zamiast zdjęć
 
-`python -m ingest report ROOT` robi całą analizę sam i zapisuje `raport.md`. Nic nie trzeba wpisywać. Brakujące dane są w raporcie na czerwono, a nie cichym pustym polem. Raport ma trzy części:
+`python -m ingest report ROOT` robi całą analizę sam. Nic nie trzeba wpisywać. Brakujące dane są w raporcie na czerwono, a nie cichym pustym polem. Opis dla człowieka jest w `JAK-TO-DZIALA.md`. Wychodzą pliki:
 
-1. **Werdykt z oceną** (🟢 OK, 🟡 UWAGA, 🔴 ŹLE, ⚪ BRAK DANYCH) dla: stabilności sił, residuów, bilansu masy, zgodności sum sił z monitorami, y+ względem modelu turbulencji, jakości siatki, przepisu na warstwy przyścienne, awarii i znaku sił. Progi są stałymi na górze `ingest/report.py`.
-2. **Liczby z plików wyników** (`.cas.h5` + `.dat.h5`), bez Fluenta i bez oglądania zdjęć:
-   - siły na każdą część bolidu i ich rozkład wzdłuż auta (pasy po 10 cm),
-   - y+ i miejsca z cofniętym przepływem (oderwania) na skrzydłach, podłodze i nadwoziu,
-   - strata ciśnienia całkowitego w przekrojach co 10 cm i miejsca, gdzie rośnie najbardziej, z przypisaniem do części, która tam robi opór,
-   - wiry (położenie, cyrkulacja, kierunek obrotu) i ich ślady od przekroju do przekroju, ślad za kołami,
-   - bilans masy i przepływ przez chłodnicę.
-3. **Czego brakuje**: lista plików i danych, których nie było w folderze.
+- `SKROT.md` / `.html`: jedna strona z werdyktem, liczbami, tym, skąd biorą się siły, i tym, na co uważać,
+- `PELNY.md` / `.html`: wszystko (dodatki A–I: strefy, siły wzdłuż auta, przekroje, wiry, residua, ustawienia, wiarygodność, metoda, słowniczek),
+- `WIARYGODNOSC.md`: ocena 0–100 z wagami i źródłami,
+- `obrazy/galeria.html`: przekroje w płaszczyznach CFD-Post,
+- `raport.json`, `aeropack.json`, `dla-chatbota.md`.
+
+Liczby pochodzą z plików wyników (`.cas.h5` + `.dat.h5`), bez Fluenta i bez oglądania zdjęć:
+
+- siły na każdą część bolidu i ich rozkład wzdłuż auta (pasy po 10 cm),
+- y+, wysokość pierwszej komórki i miejsca z cofniętym przepływem (oderwania),
+- strata ciśnienia całkowitego w przekrojach co 10 cm, z przypisaniem do części, która tam robi opór,
+- wiry (położenie, cyrkulacja, kierunek obrotu), ich ślady od przekroju do przekroju, ślad za kołami,
+- bilans masy, przepływ przez chłodnicę, residua.
+
+**Tryb tylko z plików modelu.** Logi `.trn`, pliki `.out`, `.wft` i zdjęcia nie są wymagane. Gdy ich brak, program liczy zamiast nich z `.cas.h5` i `.dat.h5` i oznacza, co jest przybliżeniem:
+
+| Czego brakuje | Z czego liczone zamiast tego |
+|---|---|
+| `.out` (historia sił) | różnica między końcową wartością chwilową a średnią z `.dat.h5`. Pełny dryf w ostatnich 200 iteracjach wymaga `.out`, bo tabela 100 próbek w `.dat.h5` nie jest prawdziwą historią |
+| `.trn` (residua) | historia residuów z `.dat.h5`, wartość znormalizowana jak w logu |
+| `.trn` (liczba komórek, połowa auta) | liczba komórek z pola, połowa auta po płaszczyźnie symetrii w siatce |
+| `.trn` (jakość siatki) | przybliżenie z geometrii, przesadza w spłaszczonych komórkach |
+| `.wft` (warstwy przyścienne) | wysokość pierwszej komórki zmierzona z siatki |
+| zdjęcia CFD-Post | własne obrazki w tych samych płaszczyznach |
+| `.trn` (awarie, przerwania) | nie da się zastąpić, raport mówi, że tego nie wie |
+
+`.scdoc` jest zamkniętym formatem i nie jest czytany (geometria z `.step`). `.cdat` to ten sam wynik w starszym formacie, więc nie jest potrzebny.
 
 Dwie rzeczy, o których warto wiedzieć:
 
-- **Tarcie przy ścianie jest odtwarzane, a nie czytane z `SV_WALL_SHEAR`.** To pole w plikach wyników ma odwrócony znak (to siła ściany na płyn) i jednostki, które nie są paskalami (o 4–5 rzędów za małe). Siła tarcia jest więc liczona z y+ opartego na prędkości tarcia i odległości pierwszej komórki: `tau = mu² y+² / (rho y²)`, w kierunku prędkości przy ścianie. Sprawdzone na Baseline002: suma sił zgadza się z monitorem Fluenta co do 0,02%.
-- **Wiry są szukane siłą wirowania w płaszczyźnie przekroju**, a nie samą wirowością, bo ta druga jest też w warstwach przyściennych. Dzięki temu ścinanie przy ścianie nie jest raportowane jako wir.
+- **Tarcie przy ścianie jest odtwarzane, a nie czytane z `SV_WALL_SHEAR`.** To pole w plikach wyników ma odwrócony znak (to siła ściany na płyn) i jednostki, które nie są paskalami. Siła tarcia jest liczona z y+ opartego na prędkości tarcia i odległości pierwszej komórki: `tau = mu² y+² / (rho y²)`. Sprawdzone na Baseline002: suma sił zgadza się z monitorem Fluenta co do 0,02%.
+- **Wiry są szukane siłą wirowania w płaszczyźnie przekroju**, a nie samą wirowością, bo ta druga jest też w warstwach przyściennych.
+
+**Wiarygodność.** `WIARYGODNOSC.md` ocenia, jak wykonano symulację (zbieżność, siatka, ściana, ruchoma podłoga, obrót kół, rozmiar domeny, model turbulencji) i czy wyniki leżą w zakresie z literatury. Każde sprawdzenie ma wagę i źródło (Menter 1994, dokumentacja ANSYS, Celik i in. 2008, Katz 2006, Gupta i Saxena 2017 i inne, patrz `ingest/credibility.py`). Zgodność z rzeczywistością jest oceniana tylko wtedy, gdy obok symulacji leży `pomiary.json` (`CdA_m2`, `ClA_m2`, `przod_masa_pct`, `zrodlo`). Progi to praktyka, a nie normy.
+
+**Przeglądarka 3D.** `python -m ingest viewer ROOT` zapisuje folder `<nazwa>.viewer` w formacie projektu CFD3DViewer (pole na siatce 2 cm, powierzchnia scalona do 4 mm, linie prądu policzone z pola prędkości, presety kamer). Wiewer wczytuje foldery `*.viewer` z jednego katalogu. Format sprawdzony walidatorem wiewera (`CFD3D_SRC=<ścieżka do src wiewera> python -m pytest tests/test_viewer_export.py`).
 
 Wyniki pośrednie lądują w `quant/<case>/` (poza gitem). Środki komórek, których solver nie zapisuje, są liczone raz i trzymane w `quant/<case>/.cache/`.
 

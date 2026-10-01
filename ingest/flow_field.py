@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ingest.h5_mesh import node_coords
+from ingest.h5_mesh import iter_face_chunks
 
 BOX_Y = (-1.3, 0.15)
 BOX_Z = (-0.02, 1.6)
@@ -40,55 +40,6 @@ TRACK_LINK_M = 0.12
 
 # ------------------------------------------------------------------ cell centres
 
-def _read_split(group, start: int, stop: int) -> np.ndarray:
-    """Slice [start, stop) of a dataset that Fluent may split into numbered pieces ('1', '2', ...)."""
-    out = []
-    offset = 0
-    for key in sorted(group, key=int):
-        part = group[key]
-        n = int(part.shape[0])
-        lo, hi = max(start, offset), min(stop, offset + n)
-        if lo < hi:
-            out.append(part[lo - offset : hi - offset])
-        offset += n
-        if offset >= stop:
-            break
-    return np.concatenate(out) if out else np.zeros(0, dtype=np.uint32)
-
-
-INTERIOR_ZONE = 2
-
-
-def _interior_runs(mesh) -> list[tuple[int, int, int]]:
-    """(first face, one past the last face, offset in the c1 list) of every interior zone, 0-based.
-
-    Only interior faces have a second cell, so Fluent stores c1 for them alone, zone after zone.
-    """
-    top = mesh["meshes/1/faces/zoneTopology"]
-    zones = sorted(zip(top["minId"][()], top["maxId"][()], top["zoneType"][()]))
-    runs, offset = [], 0
-    for lo, hi, kind in zones:
-        if int(kind) != INTERIOR_ZONE:
-            continue
-        runs.append((int(lo) - 1, int(hi), offset))
-        offset += int(hi) - int(lo) + 1
-    return runs
-
-
-def _second_cells(c1, runs, start: int, stop: int) -> tuple[np.ndarray, np.ndarray]:
-    """Face indices (within [start, stop)) and second-cell ids of the interior faces in the slice."""
-    idx, cells = [], []
-    for lo, hi, offset in runs:
-        a, b = max(lo, start), min(hi, stop)
-        if a >= b:
-            continue
-        idx.append(np.arange(a - start, b - start))
-        cells.append(_read_split(c1, offset + (a - lo), offset + (b - lo)).astype(np.int64))
-    if not idx:
-        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
-    return np.concatenate(idx), np.concatenate(cells)
-
-
 def cell_centers(cas_path: Path, cache: Path | None = None, chunk_faces: int = 2_000_000) -> np.ndarray:
     """Cell centres (n, 3) as the mean of the centres of the cell's faces. Cached as .npy."""
     import h5py
@@ -96,34 +47,14 @@ def cell_centers(cas_path: Path, cache: Path | None = None, chunk_faces: int = 2
     if cache is not None and cache.exists():
         return np.load(cache)
     with h5py.File(cas_path, "r") as mesh:
-        coords = np.asarray(node_coords(mesh)[:], dtype=np.float32)
-        nn = mesh["meshes/1/faces/nodes/1/nnodes"]
-        nodes = mesh["meshes/1/faces/nodes/1/nodes"]
-        c0 = mesh["meshes/1/faces/c0"]
-        c1 = mesh["meshes/1/faces/c1"]
-        runs = _interior_runs(mesh)
-        n_faces = int(nn.shape[0])
+        c0, c1 = mesh["meshes/1/faces/c0"], mesh["meshes/1/faces/c1"]
         n_cells = int(max(max(int(c0[k][:].max()) for k in c0), max(int(c1[k][:].max()) for k in c1)))
         acc = np.zeros((n_cells, 3), dtype=np.float64)
         cnt = np.zeros(n_cells, dtype=np.float64)
-        cursor = 0
-        for start in range(0, n_faces, chunk_faces):
-            stop = min(n_faces, start + chunk_faces)
-            counts = nn[start:stop].astype(np.int64)
-            total = int(counts.sum())
-            fnodes = nodes[cursor : cursor + total].astype(np.int64)
-            cursor += total
-            pts = coords[fnodes - 1]
-            starts = np.zeros(counts.size, dtype=np.int64)
-            if counts.size > 1:
-                starts[1:] = np.cumsum(counts[:-1])
-            centre = np.add.reduceat(pts, starts) / counts[:, None]
-            first = _read_split(c0, start, stop).astype(np.int64)
-            face_idx, second = _second_cells(c1, runs, start, stop)
-            for owner, rows in ((first, None), (second, face_idx)):
+        for _, _, _, centre, first, face_idx, second in iter_face_chunks(mesh, chunk_faces):
+            for owner, source in ((first, centre), (second, centre[face_idx])):
                 keep = owner > 0
                 ids = owner[keep] - 1
-                source = centre if rows is None else centre[rows]
                 for dim in range(3):
                     acc[:, dim] += np.bincount(ids, weights=source[keep, dim], minlength=n_cells)
                 cnt += np.bincount(ids, minlength=n_cells)

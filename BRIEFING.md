@@ -387,6 +387,12 @@ Dodane później:
 18. [x] **`ingest/flow_field.py`** — przekroje co 10 cm: strata ciśnienia całkowitego, wiry (siła wirowania w płaszczyźnie), ich ślady, ślad za kołami, cofnięty przepływ. Zastępuje przeglądanie zdjęć.
 19. [x] **`ingest/mesh_study.py`** — test niezależności od siatki (rząd zbieżności, ekstrapolacja Richardsona, GCI przy trzech siatkach).
 
+20. [x] **Tryb tylko z plików modelu** (`dat_monitors.py`, `mesh_quality.py`, rozpoznanie połowy auta z siatki) — `.trn`, `.out`, `.wft` i zdjęcia nie są wymagane; brakujące rzeczy są liczone z `.cas.h5` i `.dat.h5` i oznaczone jako przybliżenia.
+21. [x] **`ingest/plane_images.py`, `documents.py`** — obrazki przekrojów w płaszczyznach CFD-Post i galeria, `SKROT` i `PELNY` (md i html).
+22. [x] **`ingest/compare.py`** — porównanie dwóch lub więcej symulacji (tabele, wykresy, macierz ocen).
+23. [x] **`ingest/credibility.py`** — ocena wiarygodności względem literatury, ze źródłami; zgodność z rzeczywistością tylko z `pomiary.json`.
+24. [x] **`ingest/viewer_export.py`** — eksport do przeglądarki 3D CFD3DViewer.
+
 Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) i `npm test` (adapter, silnik oceny `agent.ts`, `ask`, parser `geometry.yaml`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
 
 ---

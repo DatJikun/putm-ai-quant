@@ -37,12 +37,26 @@ def _yplus_stats(state: dict) -> dict:
     }
     worst = int(np.argmax(yp))
     return {
+        "min": round(float(yp.min()), 3),
+        "mean": round(float((yp * w).sum() / total), 3) if total > 0 else None,
         "median": round(float(np.median(yp)), 3),
         "p95": round(float(np.percentile(yp, 95)), 3),
         "max": round(float(yp[worst]), 2),
         "maxAtM": [round(float(v), 3) for v in state["centers"][worst]],
         "areaShare": shares,
     }
+
+
+def _first_cell(state: dict) -> dict:
+    """Height of the wall-adjacent cell, twice its centre distance from the wall (all faces, in metres)."""
+    h = 2.0 * state["firstCell"]
+    return {"median": round(float(np.median(h)), 7), "p95": round(float(np.percentile(h, 95)), 7), "max": round(float(h.max()), 7)}
+
+
+def _wall_speed(state: dict) -> dict:
+    """Speed of the wall itself (moving ground, rotating wheels), in m/s."""
+    v = np.linalg.norm(state["wallVelocity"], axis=1)
+    return {"median": round(float(np.median(v)), 3), "max": round(float(v.max()), 3)}
 
 
 def _strip_index(x: np.ndarray) -> np.ndarray:
@@ -114,6 +128,9 @@ def zone_force_table(
                 "Fviscous": [float(v) for v in f_viscous],
                 "group": group_for(name),
                 "yplus": _yplus_stats(state),
+                "firstCellHeightM": _first_cell(state),
+                "wallSpeedMs": _wall_speed(state),
+                "bboxM": [[round(float(v), 3) for v in state["centers"].min(axis=0)], [round(float(v), 3) for v in state["centers"].max(axis=0)]],
                 "reverseFlow": _reverse_flow(state, speed_ms),
                 "strips": [
                     {"x_m": _strip_x(base + i), "Cd": round(float(drag[i]), 5), "downforceCoeff": round(float(down[i]), 5)}

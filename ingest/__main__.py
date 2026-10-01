@@ -12,7 +12,11 @@ from ingest.fluent_dump import pick_cas_h5, run_fluent_dump, write_force_journal
 from ingest.inventory import write_inventory
 from ingest.mesh_study import write_study
 from ingest.pack import build_pack
+from ingest.compare import compare
 from ingest.conservation import write_conservation
+from ingest.plane_images import render_all
+from ingest.slices import load_slices
+from ingest.viewer_export import export_viewer_package
 from ingest.report import build_report
 from ingest.field_grid import write_grid
 from ingest.surface_field import write_profiles, write_surfaces
@@ -37,7 +41,8 @@ def main() -> None:
     )
     rep.add_argument("root", type=Path)
     rep.add_argument("--out", type=Path)
-    rep.add_argument("--bez-przeplywu", action="store_true", help="Pomiń skan przepływu po stacjach (najdłuższy krok)")
+    rep.add_argument("--bez-przeplywu", action="store_true", help="Pomiń skan przepływu, jakość siatki i obrazki (najdłuższe kroki)")
+    rep.add_argument("--bez-obrazow", action="store_true", help="Pomiń obrazki przekrojów i galerię")
 
     ms = sub.add_parser(
         "mesh-study",
@@ -45,6 +50,31 @@ def main() -> None:
     )
     ms.add_argument("packs", nargs="+", type=Path, help="foldery paczek albo pliki aeropack.json")
     ms.add_argument("--out", type=Path, default=Path("quant"))
+
+    img = sub.add_parser(
+        "images",
+        help="Obrazki przekrojów w tych samych płaszczyznach co w CFD-Post (150 na oś) i galeria HTML, z plików wyników",
+    )
+    img.add_argument("root", type=Path)
+    img.add_argument("--out", type=Path)
+    img.add_argument("--limit", type=int, help="Tylko pierwsze N płaszczyzn na oś (do próby)")
+    img.add_argument("--bez-powierzchni", action="store_true", help="Pomiń widoki Cp, tarcia i y+ na ścianie")
+
+    cmp_ = sub.add_parser(
+        "compare",
+        help="Porównanie dwóch lub więcej symulacji: tabele różnic, wykresy i strona HTML (pierwsza to punkt odniesienia)",
+    )
+    cmp_.add_argument("folders", nargs="+", type=Path, help="foldery paczek zrobione przez `report`")
+    cmp_.add_argument("--out", type=Path, default=Path("quant") / "porownanie")
+    cmp_.add_argument("--nazwy", help="Własne nazwy po przecinku, w tej samej kolejności")
+
+    vw = sub.add_parser(
+        "viewer",
+        help="Eksport do przeglądarki 3D (CFD3DViewer): pole przepływu, powierzchnia bolidu i linie prądu jako folder <nazwa>.viewer",
+    )
+    vw.add_argument("root", type=Path)
+    vw.add_argument("--out", type=Path)
+    vw.add_argument("--krok", type=float, default=0.02, help="Rozmiar kafelka siatki objętościowej w metrach")
 
     cons = sub.add_parser("conservation", help="Residua i bilans masy z .dat.h5")
     cons.add_argument("root", type=Path)
@@ -128,9 +158,9 @@ def main() -> None:
         print(json.dumps({"out": str(out), "kind": pack["identity"]["kind"], "warnings": pack["warnings"]}, ensure_ascii=False, indent=2))
     elif args.cmd == "report":
         out = args.out or Path("packs") / args.root.name
-        rep_data = build_report(args.root, out, flow=not args.bez_przeplywu)
+        rep_data = build_report(args.root, out, flow=not args.bez_przeplywu, images=not args.bez_obrazow)
         verdict = rep_data["verdict"]
-        print(json.dumps({"out": str(out), "raport": str(out / "raport.md"), "werdykt": verdict["label"], "ocena": verdict["status"], "na_czerwono": verdict["bad"], "na_zolto": verdict["warn"], "bez_danych": verdict["missing"], "brakuje": rep_data["missing"]}, ensure_ascii=False, indent=2))
+        print(json.dumps({"out": str(out), "skrot": str(out / "SKROT.md"), "pelny": str(out / "PELNY.md"), "galeria": str(out / "obrazy" / "galeria.html"), "werdykt": verdict["label"], "ocena": verdict["status"], "na_czerwono": verdict["bad"], "na_zolto": verdict["warn"], "bez_danych": verdict["missing"], "brakuje": rep_data["missing"]}, ensure_ascii=False, indent=2))
     elif args.cmd == "mesh-study":
         result = write_study(args.packs, args.out / "siatka.json", args.out / "siatka.md")
         print(
@@ -145,6 +175,55 @@ def main() -> None:
                 indent=2,
             )
         )
+    elif args.cmd == "images":
+        out = args.out or Path("packs") / args.root.name / "obrazy"
+        pack_file = Path("packs") / args.root.name / "aeropack.json"
+        if not pack_file.exists():
+            build_pack(args.root, pack_file.parent)
+        refs = json.loads(pack_file.read_text(encoding="utf-8"))["kpis"]["references"]
+        index_file = pack_file.parent / "images" / "index.json"
+        result = render_all(
+            args.root,
+            out,
+            rho=refs["rho"]["value"],
+            mu=refs["mu"]["value"],
+            speed_ms=refs["speedMs"]["value"],
+            template=load_slices(),
+            images_index=json.loads(index_file.read_text(encoding="utf-8")) if index_file.exists() else None,
+            cache_dir=Path("quant") / args.root.name / ".cache",
+            surface=not args.bez_powierzchni,
+            limit=args.limit,
+            title=f"Przekroje przepływu: {args.root.name}",
+        )
+        print(json.dumps({"out": str(out), "galeria": str(out / result["gallery"]), "obrazow": result["images"], "plaszczyzn": result["planes"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "compare":
+        labels = [n.strip() for n in args.nazwy.split(",")] if args.nazwy else None
+        result = compare(args.folders, args.out, labels)
+        print(json.dumps({"out": str(args.out / "POROWNANIE.html"), "symulacje": result["names"], "zastrzezenia": result["issues"], "wykresow": result["charts"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "viewer":
+        import re
+
+        pack_file = Path("packs") / args.root.name / "aeropack.json"
+        if not pack_file.exists():
+            build_pack(args.root, pack_file.parent)
+        pack = json.loads(pack_file.read_text(encoding="utf-8"))
+        refs = pack["kpis"]["references"]
+        ident = pack.get("identity") or {}
+        case_id = re.sub(r"[^A-Za-z0-9_.-]", "_", ident.get("caseId") or args.root.name)
+        out = args.out or Path("packs") / args.root.name / "viewer"
+        package = export_viewer_package(
+            args.root,
+            out,
+            case_id=case_id,
+            display_name=f"{ident.get('vehicle', 'bolid')} {ident.get('caseId', args.root.name)}, {refs['speedMs']['value']:g} m/s",
+            rho=refs["rho"]["value"],
+            mu=refs["mu"]["value"],
+            speed_ms=refs["speedMs"]["value"],
+            length_m=(refs.get("referenceLengthM") or {}).get("value") or 1.53,
+            cache_dir=Path("quant") / args.root.name / ".cache",
+            spacing=args.krok,
+        )
+        print(json.dumps({"pakiet": str(package)}, ensure_ascii=False, indent=2))
     elif args.cmd == "conservation":
         out = args.out or Path("quant") / args.root.name / "zachowanie.json"
         cons_data = write_conservation(args.root, out)
