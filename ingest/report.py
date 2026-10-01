@@ -456,6 +456,33 @@ def loss_growth(flow: dict, walls: dict | None, top: int = 4) -> list[dict]:
     return steps[:top]
 
 
+def flow_summary(flow: dict, walls: dict | None) -> dict:
+    """The few numbers of the flow scan that go into the pack and the chatbot brief."""
+    stations = flow["stations"]
+    lossy = [s for s in stations if s.get("lossIntegralM2") is not None]
+    last = lossy[-1] if lossy else None
+    wakes = {}
+    for name in ("front", "rear"):
+        rows = [(s["x_m"], s["wheels"][name]) for s in stations if name in (s.get("wheels") or {})]
+        if rows:
+            at, worst = max(rows, key=lambda r: r[1]["lossIntegralM2"])
+            wakes[name] = {"atX_m": at, **worst}
+    back = [s for s in stations if (s.get("reverseFlowAreaM2") or 0) > 0.03]
+    reverse = None
+    if back:
+        worst = max(back, key=lambda s: s["reverseFlowAreaM2"])
+        reverse = {"fromX_m": back[0]["x_m"], "toX_m": back[-1]["x_m"], "maxAreaM2": worst["reverseFlowAreaM2"], "atX_m": worst["x_m"], "minU_ms": worst["minU_ms"]}
+    return {
+        "scanFile": "quant/<case>/",
+        "stationStepM": flow.get("stationStepM"),
+        "lossBehindCar": None if last is None else {"x_m": last["x_m"], "integralM2": last["lossIntegralM2"], "areaM2": last["lossAreaM2"]},
+        "lossGrowth": loss_growth(flow, walls),
+        "vortexTracks": [{k: v for k, v in t.items() if k != "points"} for t in (flow.get("vortexTracks") or [])[:6]],
+        "wheelWakes": wakes,
+        "reverseFlow": reverse,
+    }
+
+
 def _flow_section(flow: dict | None, walls: dict | None) -> list[str]:
     lines = ["## Przepływ wokół bolidu", ""]
     if flow is None:
@@ -739,9 +766,12 @@ def build_report(case_root: Path, out_dir: Path, *, flow: bool = True, cache_dir
     walls = wall_analysis(case_root, pack)
     if walls is not None:
         attach_walls(pack, walls)
+    flow_data = flow_analysis(case_root, pack, cache_dir or Path("quant") / case_root.name / ".cache") if flow else None
+    if flow_data is not None:
+        pack["flowSummary"] = flow_summary(flow_data, walls)
+    if walls is not None or flow_data is not None:
         (out_dir / "aeropack.json").write_text(json.dumps(pack, indent=2, ensure_ascii=False), encoding="utf-8")
         write_brief(pack, out_dir)
-    flow_data = flow_analysis(case_root, pack, cache_dir or Path("quant") / case_root.name / ".cache") if flow else None
     checks = evaluate_checks(pack, conservation, walls)
     report = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
