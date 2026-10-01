@@ -78,7 +78,7 @@ def test_the_full_report_contains_every_appendix():
 def test_findings_name_the_biggest_contributors_and_parts_that_work_backwards():
     found = " ".join(_findings(_report()))
     assert "przednie skrzydło" in found and "60%" in found
-    assert "Odwrotnie niż trzeba" in found and "tylne skrzydło" in found
+    assert "Zmniejszają docisk" in found and "tylne skrzydło" in found
     assert "Oderwanie na powierzchni" in found
     assert "Najsilniejszy wir" in found
 

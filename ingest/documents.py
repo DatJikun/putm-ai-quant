@@ -60,7 +60,7 @@ def _findings(report: dict) -> list[str]:
         )
         if neg:
             names = ", ".join(PART_NAMES.get(n, n) for n, _ in neg)
-            out.append(f"Odwrotnie niż trzeba działają: {names}. Dają siłę w górę zamiast w dół.")
+            out.append(f"Zmniejszają docisk, bo dają siłę w górę: {names}.")
     summary = (report.get("pack") or {}).get("flowSummary") or {}
     growth = summary.get("lossGrowth") or []
     if growth:
