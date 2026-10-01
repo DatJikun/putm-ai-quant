@@ -9,7 +9,7 @@ export function SiteHeader() {
           <BoxSelect className="size-4 text-[#5ee0c0]" />
           <span>AeroPack</span>
           <span className="hidden text-xs text-muted-foreground sm:inline">
-            recenzja CFD bolidu FS
+            wyniki CFD bolidu FS
           </span>
         </Link>
         <nav className="flex items-center gap-1 text-sm">
@@ -17,13 +17,13 @@ export function SiteHeader() {
             href="/"
             className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground"
           >
-            Werdykt
+            Stan projektu
           </Link>
           <Link
             href="/warsztat"
             className="rounded-md bg-[#5ee0c0] px-3 py-1.5 font-medium text-[#07221c] hover:bg-[#7aead0]"
           >
-            Warsztat demo
+            Pakiety
           </Link>
         </nav>
       </div>

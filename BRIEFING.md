@@ -306,6 +306,8 @@ Nie jeden prompt z załącznikami.
 | `get_device` | `get_device(id)` | Karta z `geometry.yaml` (profil, cięciwa, rozpiętość, kąt, LE/TE). Bez `device` zwraca listę id. Wartości `TBD` to `null` |
 | `get_slice` | `get_frame` | Zwraca nazwę pliku najbliższej klatki i części na niej, nie piksele |
 
+Z metapliku dochodzi sześć pytań, dostępnych przez MCP i `ask` (nie przez `/api/ask`): `get_findings`, `get_credibility`, `get_station`, `get_wall_value`, `explain_change` i `question` (wybiera narzędzie po polsku). Odpowiadają z `meta/meta.json` i map `.npz`, bez wczytywania plików Fluenta.
+
 Nie ma jeszcze: `search_transcript`. Pozostałe trzy narzędzia z planu (`get_frame`, `get_component_force`, `get_device`) są pokryte przez `get_slice`, `get_forces` i `get_device`.
 
 **Werdykt:** `akceptowalne | warunkowo | do-poprawy | nieufne`  
@@ -394,6 +396,8 @@ Dodane później:
 24. [x] **`ingest/viewer_export.py`** — eksport do przeglądarki 3D CFD3DViewer.
 
 25. [x] **`ingest/metapack.py`** — metaplik: `meta.json` z wszystkimi liczbami, wnioskami i pochodzeniem oraz mapy powierzchni (1 cm i 3 mm) i przekroje (150 płaszczyzn na oś) w skompresowanych `.npz`. Zastępuje pliki CFD-Post i zdjęcia (18 MB zamiast 7,6 GB), obrazki da się z niego odrysować.
+26. [x] **`ingest/why.py` i `ingest/meta_ask.py`** — „dlaczego się zmieniło” (rozkład na części, pasy wzdłuż auta, środek docisku, geometria, przepływ, poziom zaufania) oraz sześć pytań do metapliku. Polecenie `why`, sekcja w `POROWNANIE.html`.
+27. [x] **Aplikacja** — strona stanu projektu, zakładka wniosków i wiarygodności, prawdziwe obrazy zamiast udawanych konturów, zakładka porównania, trasa `/api/packs/files/...` z listą dozwolonych plików (`src/lib/meta.ts`, `src/lib/pack-list.ts`, `src/lib/pack-path.ts`).
 
 Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) i `npm test` (adapter, silnik oceny `agent.ts`, `ask`, parser `geometry.yaml`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
 

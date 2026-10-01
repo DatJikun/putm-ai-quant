@@ -138,4 +138,38 @@ def answer(pack_dir: Path, tool: str, args: dict) -> dict:
         if not math.isfinite(station):
             raise ValueError("station musi być liczbą")
         return slice_frame(pack_dir, str(args.get("axis") or "x"), station, args.get("field"))
+    if tool in {"get_findings", "findings"}:
+        from ingest.meta_ask import findings
+
+        return findings(pack_dir, int(args.get("limit") or 10), args.get("waga"))
+    if tool in {"get_credibility", "credibility"}:
+        from ingest.meta_ask import credibility
+
+        return credibility(pack_dir)
+    if tool in {"get_station", "station"}:
+        from ingest.meta_ask import station
+
+        return station(pack_dir, _finite(args.get("x"), "x"))
+    if tool in {"get_wall_value", "wall_value"}:
+        from ingest.meta_ask import wall_value
+
+        return wall_value(pack_dir, _finite(args.get("x"), "x"), _finite(args.get("y"), "y"), _finite(args.get("z"), "z"), str(args.get("resolution") or "3mm"))
+    if tool in {"explain_change", "why"}:
+        from ingest.meta_ask import explain_change
+
+        return explain_change(pack_dir, args.get("other"))
+    if tool in {"question", "ask"}:
+        from ingest.meta_ask import question
+
+        return question(pack_dir, str(args.get("text") or args.get("pytanie") or ""), args.get("other"))
     raise ValueError(f"nieznane pytanie: {tool}")
+
+
+def _finite(value, name: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} musi być liczbą") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{name} musi być liczbą")
+    return number

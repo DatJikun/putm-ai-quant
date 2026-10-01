@@ -63,7 +63,15 @@ python -m ingest viewer "folder/z/symulacją"
 python -m ingest mesh-study packs/A packs/B packs/C
 ```
 
-Aplikacja w przeglądarce (warsztat z kartami geometrii i oceną wg reguł FSAE) uruchamia się przez `npm run dev` i otwiera pod adresem http://127.0.0.1:43147. Czyta paczki z folderu `packs/`.
+Aplikacja w przeglądarce uruchamia się przez `npm run dev` i otwiera pod adresem http://127.0.0.1:43147. Czyta paczki z folderu `packs/`. Strona główna pokazuje stan projektu i listę symulacji z oceną wiarygodności. W „Pakietach” pierwsza zakładka to wnioski i wiarygodność z metapliku, katalog pokazuje prawdziwe obrazy zrobione z plików Fluenta (nie udawane kontury), a zakładka „Porównanie” wstawia stronę z polecenia `compare`.
+
+Pytanie „dlaczego docisk zmienił się względem poprzedniej wersji” ma własne polecenie:
+
+```bash
+python -m ingest why packs/Baseline002 packs/Baseline003
+```
+
+Odpowiedź rozbija zmianę na części auta (udziały sumują się do 100%), na miejsca wzdłuż auta i na przesunięcie środka docisku. Obok podaje to, co zmieniło się w geometrii i w przepływie, oraz mówi, jak bardzo temu ufać. Jeśli symulacje różnią się modelem turbulencji, odpowiedź ostrzega, że część różnicy może pochodzić z metody, a nie z auta. To samo można zapytać chatbota przez serwer MCP (`explain_change`, `get_findings`, `get_credibility`).
 
 ## 5. Metaplik: wszystko w jednym małym folderze
 

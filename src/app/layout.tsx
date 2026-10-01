@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "AeroPack — recenzja CFD bolidu Formula Student",
+  title: "AeroPack — wyniki CFD bolidu Formula Student",
   description:
-    "Jak skwantyfikować wyniki Fluent (.cas/.dat), 1500 klatek post-processingu i model CAD, żeby agent AI mógł ocenić aero bolidu FS.",
+    "Wyniki Fluenta z plików modelu zamienione na mały metaplik: siły po częściach, mapy na ścianie, przekroje, wnioski i ocena wiarygodności.",
 }
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

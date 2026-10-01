@@ -1,3 +1,4 @@
+import type { Gallery, MetaSummary } from "./meta"
 import { evaluateCase, type ReviewDevice } from "./agent"
 import { parseGeometryYaml, parseVehicleYaml, type AeroDevice } from "./geometry-yaml"
 import type {
@@ -15,6 +16,9 @@ import type {
 export { parseGeometryYaml, parseVehicleYaml, type AeroDevice }
 
 export type AdaptedPack = {
+  /** Summary of `meta/meta.json` and the picture gallery; absent for the demo and for uploaded JSON. */
+  meta?: MetaSummary | null
+  gallery?: Gallery | null
   id: string
   name: string
   isLocal: boolean

@@ -14,6 +14,7 @@ from pathlib import Path
 from ingest.documents import markdown_to_html
 from ingest.mesh_study import differences
 from ingest.report import LIGHT, PART_NAMES, _get
+from ingest.why import explain
 
 PALETTE = ["#2a6fbb", "#d9541e", "#2f9e6f", "#8a5cc2", "#c9a227", "#5a5a5a"]
 
@@ -30,7 +31,9 @@ def load_case(folder: Path, label: str | None = None) -> dict:
     report = json.loads(report_file.read_text(encoding="utf-8")) if report_file.exists() else {}
     name = label or (pack.get("identity") or {}).get("caseId") or folder.name
     pack["_name"] = name
-    return {"name": name, "folder": str(folder), "pack": pack, "report": report}
+    meta_file = folder / "meta" / "meta.json"
+    meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else None
+    return {"name": name, "folder": str(folder), "pack": pack, "report": report, "meta": meta}
 
 
 # ------------------------------------------------------------------------ numbers
@@ -296,6 +299,18 @@ def build_document(cases: list[dict]) -> tuple[str, list[tuple[str, str]], dict]
         lines += [f"- {sentence}"]
     lines.append("")
 
+    why_blocks = []
+    if cases[0].get("meta"):
+        for case in cases[1:]:
+            if case.get("meta"):
+                result = explain(cases[0]["meta"], case["meta"])
+                result["a"], result["b"] = cases[0]["name"], case["name"]
+                why_blocks.append(result)
+    if why_blocks:
+        lines += ["## Dlaczego się zmieniło", "", "Rozkład różnicy na części, miejsca wzdłuż auta i środek docisku jest policzony i sumuje się do całości. Zmiany w przepływie i geometrii są dowodami obok, a nie udowodnionymi przyczynami.", ""]
+        for result in why_blocks:
+            lines += [f"### {result['b']} względem {result['a']}", ""] + [f"- {t}" for t in result["wnioski"]] + [""]
+
     heads = [headline(c) for c in cases]
     lines += ["## Najważniejsze liczby", ""]
     header = "| | " + " | ".join(names[:1] + [f"{n}" for n in names[1:]]) + " |"
@@ -351,7 +366,7 @@ def build_document(cases: list[dict]) -> tuple[str, list[tuple[str, str]], dict]
     if titles:
         lines += ["## Wiarygodność każdej symulacji", "", "| Sprawdzenie | " + " | ".join(names) + " |", "| --- |" + " --- |" * len(names)]
         lines += [f"| {t} | " + " | ".join(row) + " |" for t, row in zip(titles, matrix)] + [""]
-    raw = {"names": names, "issues": issues, "headline": dict(zip(names, heads)), "groups": {g: dict(zip(names, recs)) for g, recs in groups.items()}}
+    raw = {"names": names, "issues": issues, "dlaczego": why_blocks, "headline": dict(zip(names, heads)), "groups": {g: dict(zip(names, recs)) for g, recs in groups.items()}}
     return "\n".join(lines), charts, raw
 
 
