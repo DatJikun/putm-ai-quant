@@ -417,6 +417,103 @@ def missing_data(pack: dict, conservation: dict, walls: dict | None) -> list[str
     return gaps
 
 
+# ------------------------------------------------------------------- flow field
+
+def flow_analysis(case_root: Path, pack: dict, cache_dir: Path) -> dict | None:
+    """Station-by-station scan of the flow: losses, vortices, wheel wakes, reversed flow."""
+    if not (list(case_root.rglob("*.cas.h5")) and list(case_root.rglob("*.dat.h5"))):
+        return None
+    refs = references(pack)
+    if refs is None:
+        return None
+    from ingest.flow_field import scan_stations
+
+    return scan_stations(
+        case_root,
+        rho=refs["rho"],
+        speed_ms=refs["speed_ms"],
+        wheels=_get(pack, "methods", "wheelRotation"),
+        cache_dir=cache_dir,
+    )
+
+
+def loss_growth(flow: dict, walls: dict | None, top: int = 4) -> list[dict]:
+    """The x intervals where the total-pressure loss grows most, and which part makes drag there."""
+    stations = [s for s in flow["stations"] if s.get("lossIntegralM2") is not None]
+    steps = []
+    for a, b in zip(stations, stations[1:]):
+        steps.append({"fromX_m": a["x_m"], "toX_m": b["x_m"], "growthM2": round(b["lossIntegralM2"] - a["lossIntegralM2"], 4)})
+    steps.sort(key=lambda r: -r["growthM2"])
+    strips = (walls or {}).get("strips") or {}
+    for step in steps[:top]:
+        centre = (step["fromX_m"] + step["toX_m"]) / 2
+        best, best_cd = None, 0.0
+        for group, rows in strips.items():
+            for row in rows:
+                if abs(row["x_m"] - centre) < 0.051 and abs(row["Cd"]) > abs(best_cd):
+                    best, best_cd = group, row["Cd"]
+        step["dragMostlyFrom"] = PART_NAMES.get(best, best) if best else None
+    return steps[:top]
+
+
+def _flow_section(flow: dict | None, walls: dict | None) -> list[str]:
+    lines = ["## Przepływ wokół bolidu", ""]
+    if flow is None:
+        return lines + ["Nie policzono (brak plików wyników).", ""]
+    stations = flow["stations"]
+    lossy = [s for s in stations if s.get("lossIntegralM2") is not None]
+    lines += [
+        "Przekroje w poprzek auta co 10 cm, policzone z komórek solvera (to zastępuje oglądanie zdjęć). "
+        "Strata to ubytek ciśnienia całkowitego: tam, gdzie powietrze straciło energię, rośnie. Jednostka m² to „pole straty”.",
+        "",
+    ]
+    if lossy:
+        last = lossy[-1]
+        lines += [f"Za bolidem (x = {last['x_m']:.1f} m) całkowita strata to {last['lossIntegralM2']:.2f} m², a ślad zajmuje {last['lossAreaM2']:.2f} m².", ""]
+    growth = loss_growth(flow, walls)
+    if growth:
+        lines += ["Tu strata rośnie najbardziej (czyli tu powietrze oddaje najwięcej energii):", ""]
+        for g in growth:
+            by = f", największy opór w tym pasie robi: {g['dragMostlyFrom']}" if g.get("dragMostlyFrom") else ""
+            lines.append(f"- x = {g['fromX_m']:.1f} do {g['toX_m']:.1f} m: +{g['growthM2']:.3f} m²{by}")
+        lines.append("")
+    tracks = flow.get("vortexTracks") or []
+    if tracks:
+        lines += [
+            "Najsilniejsze wiry (cyrkulacja w m²/s, im większa, tym silniejszy wir; widok z przodu auta):",
+            "",
+            "| Skąd dokąd (x) | Gdzie powstaje | Kręci się | Najsilniejszy przy x | Cyrkulacja | Start y, z → koniec y, z |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for t in tracks[:6]:
+            lines.append(
+                f"| {t['fromX_m']:.1f} → {t['toX_m']:.1f} m | {t.get('region', '')} | {t['turn']} | {t['strongestAtX_m']:.1f} m | "
+                f"{abs(t['peakCirculationM2s']):.2f} | ({t['start']['y_m']:.2f}, {t['start']['z_m']:.2f}) → ({t['end']['y_m']:.2f}, {t['end']['z_m']:.2f}) |"
+            )
+        lines.append("")
+    wake_lines = []
+    for name, label in (("front", "przednim"), ("rear", "tylnym")):
+        rows = [(s["x_m"], s["wheels"][name]) for s in stations if name in (s.get("wheels") or {})]
+        if not rows:
+            continue
+        worst = max(rows, key=lambda r: r[1]["lossIntegralM2"])
+        wake_lines.append(
+            f"- za kołem {label}: największa strata w oknie koła {worst[1]['lossIntegralM2']:.3f} m² przy x = {worst[0]:.1f} m, "
+            f"szerokość śladu {worst[1]['widthM']:.2f} m, najniższe Cpt {worst[1]['minCpt']}"
+        )
+    if wake_lines:
+        lines += ["Ślady za kołami (okno ±35 cm wokół koła, do wysokości 60 cm):", ""] + wake_lines + [""]
+    back = [s for s in stations if (s.get("reverseFlowAreaM2") or 0) > 0.03]
+    if back:
+        worst = max(back, key=lambda s: s["reverseFlowAreaM2"])
+        lines += [
+            f"Przepływ cofnięty (u < 0 względem auta) zajmuje ponad 0,03 m² na stacjach x = {back[0]['x_m']:.1f} do {back[-1]['x_m']:.1f} m. "
+            f"Najwięcej przy x = {worst['x_m']:.1f} m ({worst['reverseFlowAreaM2']:.3f} m², prędkość do {worst['minU_ms']} m/s w tył).",
+            "",
+        ]
+    return lines
+
+
 # ---------------------------------------------------------------------- render
 
 def _round(value, digits: int):
@@ -619,6 +716,7 @@ def render_markdown(report: dict) -> str:
     lines += _headline(pack)
     lines += _parts_section(report["walls"])
     lines += _surface_section(report["walls"])
+    lines += _flow_section(report.get("flow"), report["walls"])
     lines += _convergence_section(pack, report["conservation"])
     lines += _setup_section(pack)
     lines += ["## Czego brakuje", ""]
@@ -633,7 +731,7 @@ def render_markdown(report: dict) -> str:
 
 # ------------------------------------------------------------------------ main
 
-def build_report(case_root: Path, out_dir: Path) -> dict:
+def build_report(case_root: Path, out_dir: Path, *, flow: bool = True, cache_dir: Path | None = None) -> dict:
     case_root = case_root.resolve()
     out_dir = out_dir.resolve()
     pack = build_pack(case_root, out_dir)
@@ -643,6 +741,7 @@ def build_report(case_root: Path, out_dir: Path) -> dict:
         attach_walls(pack, walls)
         (out_dir / "aeropack.json").write_text(json.dumps(pack, indent=2, ensure_ascii=False), encoding="utf-8")
         write_brief(pack, out_dir)
+    flow_data = flow_analysis(case_root, pack, cache_dir or Path("quant") / case_root.name / ".cache") if flow else None
     checks = evaluate_checks(pack, conservation, walls)
     report = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -652,6 +751,7 @@ def build_report(case_root: Path, out_dir: Path) -> dict:
         "missing": missing_data(pack, conservation, walls),
         "conservation": conservation,
         "walls": walls,
+        "flow": flow_data,
         "pack": pack,
     }
     (out_dir / "raport.json").write_text(json.dumps({k: v for k, v in report.items() if k != "pack"}, ensure_ascii=False, indent=1), encoding="utf-8")

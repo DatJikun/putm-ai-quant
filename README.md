@@ -86,7 +86,7 @@ Ingest działa całkowicie lokalnie, obok Twoich plików Fluent i CAD. Nie wymag
 ### Wymagania i instalacja
 
 ```bash
-pip install -r requirements.txt   # pyyaml, numpy, pillow, h5py, pytest
+pip install -r requirements.txt   # pyyaml, numpy, scipy, pillow, h5py, pytest
 # Opcjonalnie: cad_measure.py, step_cards.py i step_prep.py (bryły STEP)
 pip install cadquery-ocp
 ```
@@ -96,7 +96,7 @@ Bez `ocp` polecenie `pack` nie przerywa pracy: dopisuje ostrzeżenie i zostawia 
 ### Uruchomienie testów i kontroli
 
 ```bash
-python -m pytest        # ingest, ask
+python -m pytest        # ingest, ask, siły z plików, raport, przepływ, test siatki
 npm test                # adapter, silnik oceny, ask (TS), parser YAML, walidacja id packa
 npm run lint
 npm run typecheck       # next typegen + tsc --noEmit
@@ -110,6 +110,8 @@ To samo, plus `npm run build`, robi CI (`.github/workflows/ci.yml`). Testy weryf
 - Stabilność monitorów (dryf w ostatnim oknie, wczesne zatrzymanie) i treść `dla-chatbota.md`.
 - Obliczanie współrzędnych stacji w metrach z nazw klatek CFD-Post.
 - Zgodność odpowiedzi `ask` w Pythonie i TypeScripcie na wspólnych przypadkach (`tests/fixtures/ask-pack/cases.json`).
+- Pole wirowe: wir Lamba–Oseena jest znajdowany, czyste ścinanie przy ścianie nie jest wirem, ślady wirów łączą się między stacjami.
+- Reguły oceny w raporcie (zbieżność, residua, bilans masy, y+, siatka) i test niezależności od siatki na danych o znanym rzędzie zbieżności.
 
 ### Polecenia CLI ingestu
 
@@ -119,6 +121,9 @@ Wszystkie operacje wywołuje się przez moduł `ingest` (`python -m ingest <pole
 |---|---|---|
 | `inventory ROOT...` | Skanuje foldery, raportuje braki i typ (`full_case` / `mesh_only` / `incomplete`) | nic |
 | `pack ROOT [--out DIR]` | Składa pack: `aeropack.json`, `dla-chatbota.md`, `geometry.yaml`, `slices.yaml`, `inventory.json`, `images/index.json` | nic (`ocp` dla kart ze STEP) |
+| `report ROOT [--out DIR] [--bez-przeplywu]` | **Wszystko jednym poleceniem**: pack, residua, bilans masy, siły na części, y+, oderwania, skan przepływu. Zapisuje `raport.md` (z oceną i listą braków) i `raport.json` do `packs/<case>/` | `.cas.h5` + `.dat.h5` (bez nich liczy to, co się da, i zaznacza braki) |
+| `conservation ROOT` | Residua (z trendem) i bilans masy po brzegach domeny, przepływ przez chłodnicę i wentylator, do `quant/<case>/zachowanie.json` | `.cas.h5` + `.dat.h5` |
+| `mesh-study PACK PACK [PACK]` | Test niezależności od siatki: różnice, rząd zbieżności, ekstrapolacja i GCI przy trzech siatkach. Ostrzega, gdy poza siatką coś się różni | 2–3 paczki tego samego bolidu |
 | `dump-forces ROOT [--procs N] [--journal-only]` | Journal TUI i (opcjonalnie) headless Fluent zrzucający siły per strefa | `.cas.h5`, Ansys Fluent |
 | `brief PACK_DIR` | Odtwarza `dla-chatbota.md` z gotowego `aeropack.json` | `aeropack.json` |
 | `ask PACK forces\|part\|device\|slice` | Jedna odpowiedź z paczki (`--part`, `--device`, `--axis`, `--station`, `--field`) | `aeropack.json`, `profile.json`, `geometry.yaml`, `images/index.json` zależnie od pytania |
@@ -135,13 +140,16 @@ Najczęstsze wywołania:
 # Inwentaryzacja folderu case'a (sprawdza .cas, .dat, .trn, .jou, raporty, zdjęcia)
 python -m ingest inventory "sciezka/do/folderu/case" --out packs
 
+# Najkrótsza droga: jeden folder, jedno polecenie, nic do wpisywania ani klikania
+python -m ingest report "sciezka/do/folderu/case" --out packs/NAZWA_CASE
+
 # Kompletny pack (residuale, siły, balans, siatka, indeks zdjęć, geometria)
 python -m ingest pack "sciezka/do/folderu/case" --out packs/NAZWA_CASE
 
 # Profile Cp na płatach, żeby narzędzie `part` miało dane
 python -m ingest profiles "sciezka/do/folderu/case" --out packs/NAZWA_CASE/profile.json
 
-# Headless zrzut sił ścian, gdy monitor cz nie ma per-zone
+# Headless zrzut sił ścian, gdy monitor cz nie ma per-zone (`report` liczy je już sam z plików, ten krok jest zapasowy)
 python -m ingest dump-forces "sciezka/do/folderu/case" --journal-only   # tylko journal .jou
 python -m ingest dump-forces "sciezka/do/folderu/case" --procs 4         # odpal Fluenta
 ```
@@ -149,6 +157,26 @@ python -m ingest dump-forces "sciezka/do/folderu/case" --procs 4         # odpal
 Porównanie dwóch runów: `python -m ingest diff packs/BASE/aeropack.json packs/NOWY/aeropack.json`.
 
 Narzędzie pomocnicze poza CLI: `python -m ingest.step_prep MODEL.STEP --out MODEL_half.STEP [--dry]` przygotowuje połówkę STEP dla SpaceClaim (nazwane grupy, domena, wentylator i chłodnica wyjęte). Domyślne ścieżki w tym skrypcie są ustawione pod komputer zespołu, więc podawaj je jawnie.
+
+### Raport jednym poleceniem i liczby zamiast zdjęć
+
+`python -m ingest report ROOT` robi całą analizę sam i zapisuje `raport.md`. Nic nie trzeba wpisywać. Brakujące dane są w raporcie na czerwono, a nie cichym pustym polem. Raport ma trzy części:
+
+1. **Werdykt z oceną** (🟢 OK, 🟡 UWAGA, 🔴 ŹLE, ⚪ BRAK DANYCH) dla: stabilności sił, residuów, bilansu masy, zgodności sum sił z monitorami, y+ względem modelu turbulencji, jakości siatki, przepisu na warstwy przyścienne, awarii i znaku sił. Progi są stałymi na górze `ingest/report.py`.
+2. **Liczby z plików wyników** (`.cas.h5` + `.dat.h5`), bez Fluenta i bez oglądania zdjęć:
+   - siły na każdą część bolidu i ich rozkład wzdłuż auta (pasy po 10 cm),
+   - y+ i miejsca z cofniętym przepływem (oderwania) na skrzydłach, podłodze i nadwoziu,
+   - strata ciśnienia całkowitego w przekrojach co 10 cm i miejsca, gdzie rośnie najbardziej, z przypisaniem do części, która tam robi opór,
+   - wiry (położenie, cyrkulacja, kierunek obrotu) i ich ślady od przekroju do przekroju, ślad za kołami,
+   - bilans masy i przepływ przez chłodnicę.
+3. **Czego brakuje**: lista plików i danych, których nie było w folderze.
+
+Dwie rzeczy, o których warto wiedzieć:
+
+- **Tarcie przy ścianie jest odtwarzane, a nie czytane z `SV_WALL_SHEAR`.** To pole w plikach wyników ma odwrócony znak (to siła ściany na płyn) i jednostki, które nie są paskalami (o 4–5 rzędów za małe). Siła tarcia jest więc liczona z y+ opartego na prędkości tarcia i odległości pierwszej komórki: `tau = mu² y+² / (rho y²)`, w kierunku prędkości przy ścianie. Sprawdzone na Baseline002: suma sił zgadza się z monitorem Fluenta co do 0,02%.
+- **Wiry są szukane siłą wirowania w płaszczyźnie przekroju**, a nie samą wirowością, bo ta druga jest też w warstwach przyściennych. Dzięki temu ścinanie przy ścianie nie jest raportowane jako wir.
+
+Wyniki pośrednie lądują w `quant/<case>/` (poza gitem). Środki komórek, których solver nie zapisuje, są liczone raz i trzymane w `quant/<case>/.cache/`.
 
 ### Odpowiedzi na pytania agenta: `ask`, MCP i HTTP
 
@@ -235,3 +263,36 @@ W symulacjach symetrii (pół bolidu, jazda na wprost) recenzent trzyma się twa
 
 - **Backend / Ingest**: Python 3.11+, OpenCASCADE (`OCP`), PyYAML, pytest.
 - **Frontend**: Next.js 16 (Turbopack, App Router), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, Lucide Icons.
+
+---
+
+## 7. Plan na przyszłość
+
+Rzeczy, których jeszcze nie ma, w przybliżonej kolejności.
+
+### Zakręt, kąt znoszenia i różne prędkości
+
+Dziś jeden typ case'a: połowa auta, jazda na wprost, 15 m/s. Telemetria z przejazdów (patrz niżej) pokazuje, że bolid jeździ głównie 10–16 m/s, dochodzi do ok. 23 m/s, a szacowany kąt znoszenia mieści się w ±2,3° przez 90% czasu, maksymalnie ok. 4,5°. Do zrobienia po stronie symulacji i narzędzi:
+
+- symulacje w zakręcie (obrócony układ odniesienia albo krzywa domena) i pełny bolid zamiast połowy, bo w zakręcie nie ma symetrii,
+- mapa prędkość × kąt znoszenia × wysokość zawieszenia zamiast jednego case'a; docisk rośnie z kwadratem prędkości, więc przynajmniej 10, 15 i 20 m/s oraz jeden przypadek ok. 3–4°,
+- `report` i `diff` muszą wtedy porównywać paczki po parametrach case'a, a nie zakładać jeden,
+- po pojawieniu się case'a z kątem: wykrywanie kąta z `.cas` (dziś `yawDeg` jest stałą 0), a `Cs` zacznie mieć sens.
+
+### Telemetria z przejazdów (`.mcap`) jako rzeczywistość do porównania z CFD
+
+Nagrania z rejestratora (ROS 2, `.mcap`) są jedynym źródłem prawdy z toru. Wstępnie sprawdzone:
+
+- odczyt bez Foxglove: biblioteka `mcap` plus własny dekoder schematów IDL; działa na całych plikach i na samych początkach pliku,
+- prędkość, kąt znoszenia i obciążenia kół szacuje algorytm sterownika (`/yaw_ref`), to nie jest pomiar. Suma obciążeń kół jest stała (2943 N), więc docisku aerodynamicznego z niej nie widać,
+- **kierownica** jest w `/putm_vcl/steering_wheel` w nagraniach od 2.07.2026. W nagraniach z 29.06.2026 skręt jest w `frontbox_driver_input`,
+- **ugięcie przedniego zawieszenia** (`frontbox_data`) ma wartości tylko w nagraniach z 29.06.2026. Od 2.07 jest zerowe, tak samo jak licznik okrążeń. GPS nie jest zapisywany w ogóle,
+- opór z wybiegu (zwalnianie bez gazu i hamulca) daje 1,5–2,1 m² powierzchni oporu przy CFD 1,2–1,6 m². Rozrzut między kierowcami jest za duży na wnioski, bo w pomiarze siedzi też opór silników i opon.
+
+Do zrobienia: narzędzie `telemetry` czytające nagranie, rozkład prędkości i kąta znoszenia, wybieg, ugięcie zawieszenia względem prędkości, oraz włączenie zapisu zawieszenia, kierownicy i GPS w rejestratorze przed następnymi testami.
+
+### Dalsze pomysły
+
+- `search_transcript(regex)` w `ask` i MCP (jedyne brakujące narzędzie z pierwotnego planu),
+- więcej niż jedna paczka naraz w UI (porównanie `diff` obok siebie),
+- rzędy zbieżności dla pól (nie tylko dla sił) w `mesh-study`.

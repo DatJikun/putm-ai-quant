@@ -306,7 +306,7 @@ Nie jeden prompt z załącznikami.
 | `get_device` | `get_device(id)` | Karta z `geometry.yaml` (profil, cięciwa, rozpiętość, kąt, LE/TE). Bez `device` zwraca listę id. Wartości `TBD` to `null` |
 | `get_slice` | `get_frame` | Zwraca nazwę pliku najbliższej klatki i części na niej, nie piksele |
 
-Nie ma jeszcze: `search_transcript`.
+Nie ma jeszcze: `search_transcript`. Pozostałe trzy narzędzia z planu (`get_frame`, `get_component_force`, `get_device`) są pokryte przez `get_slice`, `get_forces` i `get_device`.
 
 **Werdykt:** `akceptowalne | warunkowo | do-poprawy | nieufne`  
 plus: zbieżność, siatka/y+/metody, L/D, balans, pokrycie klatek, pytania do inżyniera, kolejne runy.
@@ -369,7 +369,7 @@ Status poszczególnych modułów w kodzie:
 6. [x] **`ingest/pictures.py` i `ingest/slices.py`** — mapowanie klatek CFD-Post na stacje osi w metrach (-1.1 m do 2.5 m) + selekcja hero ramek do `images/index.json`.
 7. [x] **`ingest/cad_measure.py`** — moduł OpenCASCADE (`OCP`) do precyzyjnego cięcia profili ze STEP-a i wyznaczania cięciw, kątów AoA oraz współrzędnych LE/TE.
 8. [x] **`ingest/pack.py`** — główny kompilator składający `aeropack.json` zgodnie ze schematem `aeropack/v1`.
-9. [x] **Prompt + tools** — kontrakt dla agenta z wyselekcjonowanymi klatkami hero i zakazem interpretacji pikseli jako metrologii. Narzędzia: 3 z 4 planowanych w wersji zbiorczej (patrz sekcja 8).
+9. [x] **Prompt + tools** — kontrakt dla agenta z wyselekcjonowanymi klatkami hero i zakazem interpretacji pikseli jako metrologii. Narzędzia: cztery pytania działają (`get_forces`, `get_part`, `get_device`, `get_slice`), brakuje tylko `search_transcript` (patrz sekcja 8).
 10. [x] **UI & API Next.js** (`src/app/api/packs/`, `src/lib/pack-adapter.ts`, `src/components/workbench.tsx`) — dynamiczne ładowanie lokalnych packów z dysku, obsługa `BASELINEiter002` bolidu PM09, podgląd kart geometrii i diagnostyki solvera.
 
 Dodane po pierwszej wersji:
@@ -378,6 +378,14 @@ Dodane po pierwszej wersji:
 12. [x] **`ingest/setup_trace.py`, `wft_mesh.py`, rozszerzony `transcript.py` i `rfile.py`** — ustawienia z transcriptu, warstwy przyścienne z `.wft`, przerwane sesje solvera, dryf sił w ostatnim oknie i wczesne zatrzymanie.
 13. [x] **Analiza pól** — `field_grid.py` (siatka pola, ślad za skrzydłem), `surface_field.py` (mapy Cp, y+ i tarcia, profile), `screen_quant.py` (liczby z paska kolorów klatek), `car_layout.py` i `step_cards.py` (stacje i karty z geometrii case'a). Komendy: `grid`, `wake`, `surfaces`, `profiles`, `screens`.
 14. [x] **`ingest/diff_pack.py`, `chatbot_brief.py`, `ask.py`, `mcp_server.py`** — porównanie dwóch runów, skrót paczki dla czatu bez narzędzi (`dla-chatbota.md`), odpowiedzi na pojedyncze pytania i serwer MCP.
+
+Dodane później:
+
+15. [x] **`ingest/report.py`** — jedno polecenie na folder case'a: pack, residua, bilans masy, siły na części, y+, oderwania i skan przepływu. Ocena światłami i lista braków (brak danych na czerwono).
+16. [x] **`ingest/zone_forces.py`, `wall_state.py`, `h5_mesh.py`** — siły na każdą część bolidu prosto z `.cas.h5` + `.dat.h5` (bez Fluenta). Tarcie odtwarzane z y+ i odległości pierwszej komórki, bo `SV_WALL_SHEAR` w plikach ma odwrócony znak i złe jednostki. Zgodność z monitorem: 0,02% (Baseline002).
+17. [x] **`ingest/conservation.py`** — residua i ich trend, bilans masy po brzegach domeny, przepływ przez chłodnicę i wentylator, wszystko z `.dat.h5`.
+18. [x] **`ingest/flow_field.py`** — przekroje co 10 cm: strata ciśnienia całkowitego, wiry (siła wirowania w płaszczyźnie), ich ślady, ślad za kołami, cofnięty przepływ. Zastępuje przeglądanie zdjęć.
+19. [x] **`ingest/mesh_study.py`** — test niezależności od siatki (rząd zbieżności, ekstrapolacja Richardsona, GCI przy trzech siatkach).
 
 Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) i `npm test` (adapter, silnik oceny `agent.ts`, `ask`, parser `geometry.yaml`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
 
@@ -419,6 +427,7 @@ Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_inges
   - Przełącznik case'ów (lokalne z `packs/`, syntetyczny demo FS-26, wgrywanie JSON).
   - Tabela kart parametrycznych geometrii ze STEP/YAML.
   - Silnik oceniania według twardych kryteriów FSAE.
+- **Raport**: `python -m ingest report ROOT` (patrz README, „Raport jednym poleceniem i liczby zamiast zdjęć”).
 - **Odpowiedzi na pytania agenta**: `ask` (CLI), serwer MCP (`ingest/mcp_server.py`), `/api/ask` i `dla-chatbota.md` dla czatu bez narzędzi.
 
 ---
@@ -443,3 +452,13 @@ Dla case’a half-car yaw 0 (PM09 Baseline002):
 - [x] `images/index.json` ma 1920 wpisów z osią, stacją w metrach i hero klatkami.
 - [x] recenzent zwraca werdykt z cytatami (y+, continuity, stacja X, id urządzenia).
 - [x] w packu jest jawne: half-model, yaw 0, konwencja sił, Aref.
+
+---
+
+## 16. Plan na przyszłość
+
+Zakręt, kąt znoszenia, pełny bolid, mapa prędkości i telemetria z toru są opisane w README, sekcja 7. Tu tylko decyzje, które z tego wynikają dla agenta:
+
+- dopóki nie ma case'a w zakręcie, agent nadal **nie ocenia zachowania w zakręcie**,
+- liczby z telemetrii (prędkość, kąt znoszenia) służą do doboru case'ów, a nie do walidacji docisku: obciążenia kół w nagraniach są z modelu i nie zawierają docisku aerodynamicznego,
+- porównywać można tylko symulacje liczone tym samym modelem turbulencji i traktowaniem ściany. `report` i `mesh-study` ostrzegają, gdy tak nie jest.

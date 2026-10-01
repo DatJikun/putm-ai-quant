@@ -10,6 +10,7 @@ from ingest.cas_setup import parse_cas_setup
 from ingest.diff_pack import write_diff
 from ingest.fluent_dump import pick_cas_h5, run_fluent_dump, write_force_journal, find_fluent
 from ingest.inventory import write_inventory
+from ingest.mesh_study import write_study
 from ingest.pack import build_pack
 from ingest.conservation import write_conservation
 from ingest.report import build_report
@@ -36,6 +37,14 @@ def main() -> None:
     )
     rep.add_argument("root", type=Path)
     rep.add_argument("--out", type=Path)
+    rep.add_argument("--bez-przeplywu", action="store_true", help="Pomiń skan przepływu po stacjach (najdłuższy krok)")
+
+    ms = sub.add_parser(
+        "mesh-study",
+        help="Test niezależności od siatki: 2-3 paczki tego samego bolidu na różnych siatkach (GCI przy trzech)",
+    )
+    ms.add_argument("packs", nargs="+", type=Path, help="foldery paczek albo pliki aeropack.json")
+    ms.add_argument("--out", type=Path, default=Path("quant"))
 
     cons = sub.add_parser("conservation", help="Residua i bilans masy z .dat.h5")
     cons.add_argument("root", type=Path)
@@ -119,9 +128,23 @@ def main() -> None:
         print(json.dumps({"out": str(out), "kind": pack["identity"]["kind"], "warnings": pack["warnings"]}, ensure_ascii=False, indent=2))
     elif args.cmd == "report":
         out = args.out or Path("packs") / args.root.name
-        rep_data = build_report(args.root, out)
+        rep_data = build_report(args.root, out, flow=not args.bez_przeplywu)
         verdict = rep_data["verdict"]
         print(json.dumps({"out": str(out), "raport": str(out / "raport.md"), "werdykt": verdict["label"], "ocena": verdict["status"], "na_czerwono": verdict["bad"], "na_zolto": verdict["warn"], "bez_danych": verdict["missing"], "brakuje": rep_data["missing"]}, ensure_ascii=False, indent=2))
+    elif args.cmd == "mesh-study":
+        result = write_study(args.packs, args.out / "siatka.json", args.out / "siatka.md")
+        print(
+            json.dumps(
+                {
+                    "out": str(args.out / "siatka.md"),
+                    "porownywalne": result["comparable"],
+                    "zastrzezenia": result["issues"],
+                    "wyniki": {q["id"]: q.get("gciFinePct", q.get("relativeDifferencePct")) for q in result["quantities"]},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     elif args.cmd == "conservation":
         out = args.out or Path("quant") / args.root.name / "zachowanie.json"
         cons_data = write_conservation(args.root, out)
