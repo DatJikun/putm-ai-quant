@@ -393,6 +393,8 @@ Dodane później:
 23. [x] **`ingest/credibility.py`** — ocena wiarygodności względem literatury, ze źródłami; zgodność z rzeczywistością tylko z `pomiary.json`.
 24. [x] **`ingest/viewer_export.py`** — eksport do przeglądarki 3D CFD3DViewer.
 
+25. [x] **`ingest/metapack.py`** — metaplik: `meta.json` z wszystkimi liczbami, wnioskami i pochodzeniem oraz mapy powierzchni (1 cm i 3 mm) i przekroje (150 płaszczyzn na oś) w skompresowanych `.npz`. Zastępuje pliki CFD-Post i zdjęcia (18 MB zamiast 7,6 GB), obrazki da się z niego odrysować.
+
 Język skryptów: **Python 3.11+**. Testy: `python -m pytest` (`tests/test_ingest.py`, `tests/test_ask.py`, `tests/test_mcp_server.py`) i `npm test` (adapter, silnik oceny `agent.ts`, `ask`, parser `geometry.yaml`, walidacja id packa). CI (`.github/workflows/ci.yml`) uruchamia je razem z lintem, typecheckiem i buildem.
 
 ---

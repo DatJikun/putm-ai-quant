@@ -125,6 +125,9 @@ Wszystkie operacje wywołuje się przez moduł `ingest` (`python -m ingest <pole
 | `images ROOT [--out DIR] [--limit N]` | Obrazki przekrojów (Cp, Cpt, prędkość) w tych samych 150 płaszczyznach na oś co w CFD-Post, widoki Cp, tarcia i y+ na aucie oraz `galeria.html` z suwakiem | `.cas.h5` + `.dat.h5`, matplotlib |
 | `compare DIR DIR [DIR...] [--nazwy A,B]` | Porównanie dwóch lub więcej symulacji: tabele różnic, wykresy nałożone na siebie, macierz ocen, `POROWNANIE.html` | foldery paczek zrobione przez `report` |
 | `viewer ROOT [--out DIR] [--krok M]` | Eksport do przeglądarki 3D (CFD3DViewer): pole przepływu na siatce, powierzchnia auta z Cp, tarciem i y+, linie prądu, kamery. Folder `<nazwa>.viewer` | `.cas.h5` + `.dat.h5`, `zarr` |
+| `meta ROOT [--out DIR]` | **Metaplik**: folder `packs/<case>/meta/` z `meta.json` (wszystkie liczby, wnioski ze wskazaniem dowodu, pochodzenie każdej liczby) i mapami w dwóch rozdzielczościach (`powierzchnia_1cm.npz`, `powierzchnia_3mm.npz`) oraz `przekroje.npz` (150 płaszczyzn na oś). Zastępuje pliki CFD-Post i zdjęcia | `.cas.h5` + `.dat.h5` |
+| `meta-render META_DIR --out DIR [--powierzchnia 1cm\|3mm]` | Rysuje obrazki wyłącznie z map metapliku | folder metapliku |
+| `meta-verify META_DIR` | Sprawdza kompletność i sumy kontrolne metapliku | folder metapliku |
 | `conservation ROOT` | Residua (z trendem) i bilans masy po brzegach domeny, przepływ przez chłodnicę i wentylator, do `quant/<case>/zachowanie.json` | `.cas.h5` + `.dat.h5` |
 | `mesh-study PACK PACK [PACK]` | Test niezależności od siatki: różnice, rząd zbieżności, ekstrapolacja i GCI przy trzech siatkach. Ostrzega, gdy poza siatką coś się różni | 2–3 paczki tego samego bolidu |
 | `dump-forces ROOT [--procs N] [--journal-only]` | Journal TUI i (opcjonalnie) headless Fluent zrzucający siły per strefa | `.cas.h5`, Ansys Fluent |
@@ -203,6 +206,19 @@ Dwie rzeczy, o których warto wiedzieć:
 **Przeglądarka 3D.** `python -m ingest viewer ROOT` zapisuje folder `<nazwa>.viewer` w formacie projektu CFD3DViewer (pole na siatce 2 cm, powierzchnia scalona do 4 mm, linie prądu policzone z pola prędkości, presety kamer). Wiewer wczytuje foldery `*.viewer` z jednego katalogu. Format sprawdzony walidatorem wiewera (`CFD3D_SRC=<ścieżka do src wiewera> python -m pytest tests/test_viewer_export.py`).
 
 Wyniki pośrednie lądują w `quant/<case>/` (poza gitem). Środki komórek, których solver nie zapisuje, są liczone raz i trzymane w `quant/<case>/.cache/`.
+
+### Metaplik: jedno miejsce z wszystkim zamiast CFD-Post i zdjęć
+
+`python -m ingest meta ROOT` zapisuje `packs/<case>/meta/`:
+
+| Plik | Co zawiera | Rozmiar (Baseline002) |
+|---|---|---|
+| `meta.json` | wszystkie liczby, ocena wiarygodności, **wnioski** posortowane wg wagi (każdy ze wskazaniem, gdzie w pliku jest dowód), **pochodzenie** każdej części (skąd i czy dokładne, czy przybliżenie), opis map, cała paczka `aeropack.json` i cały raport | 0,25 MB |
+| `powierzchnia_1cm.npz` | Cp, tarcie przy ścianie, y+ i cofnięty przepływ na ścianach auta, jedna wartość na kostkę 1 cm | 0,9 MB |
+| `powierzchnia_3mm.npz` | to samo w kostkach 3 mm (widać szczeliny między klapami) | 5,6 MB |
+| `przekroje.npz` | Cp, Cpt i prędkość względna w tych samych 150 płaszczyznach na oś co CFD-Post, siatka 2 cm | 11,4 MB |
+
+Razem 18 MB zamiast 7,6 GB. Pozycje w mapach to całkowite indeksy kostek (dokładne co do kostki), wartości w połowie precyzji. `meta-render` rysuje z nich obrazki bez żadnego innego pliku, a `meta-verify` sprawdza sumy kontrolne, więc zdjęć z CFD-Post nie trzeba trzymać. Wczytanie w Pythonie: `ingest.metapack.load_meta`, `load_surface`, `load_planes`.
 
 ### Odpowiedzi na pytania agenta: `ask`, MCP i HTTP
 

@@ -65,7 +65,25 @@ python -m ingest mesh-study packs/A packs/B packs/C
 
 Aplikacja w przeglądarce (warsztat z kartami geometrii i oceną wg reguł FSAE) uruchamia się przez `npm run dev` i otwiera pod adresem http://127.0.0.1:43147. Czyta paczki z folderu `packs/`.
 
-## 5. Jak czytać ocenę wiarygodności
+## 5. Metaplik: wszystko w jednym małym folderze
+
+To jest główny cel projektu: zamiast trzymać 16 GB plików CFD-Post i 1920 zdjęć, trzymasz jeden mały folder, z którego da się wszystko odczytać.
+
+```bash
+python -m ingest meta "folder/z/symulacją"
+```
+
+W środku (`packs/<nazwa>/meta/`):
+
+- `meta.json`: **wszystkie liczby** (siły, y+, oderwania, wiry, residua, ustawienia, ocena wiarygodności), **wnioski** posortowane od najważniejszych (przy każdym napisane, gdzie w pliku leży dowód) i **pochodzenie** każdej liczby (z którego pliku i czy to wartość dokładna, czy przybliżenie). Około 0,25 MB.
+- `powierzchnia_1cm.npz` i `powierzchnia_3mm.npz`: mapy ciśnienia, tarcia, y+ i oderwań na aucie, w dwóch rozdzielczościach. Gruba (1 cm) wystarcza do czytania, drobna (3 mm) pokazuje szczeliny między klapami.
+- `przekroje.npz`: pola w 150 płaszczyznach na oś, w tych samych miejscach co zdjęcia z CFD-Post.
+
+Razem około 18 MB zamiast 7,6 GB. Z samych tych plików da się narysować obrazki z powrotem (`python -m ingest meta-render`), więc zdjęć nie trzeba przechowywać. `python -m ingest meta-verify` sprawdza, czy nic nie zginęło ani nie zostało uszkodzone.
+
+Dzięki temu agent AI (albo człowiek) czyta najpierw `wnioski`, a potem sięga po konkretną mapę lub liczbę, zamiast przeglądać zdjęcia.
+
+## 6. Jak czytać ocenę wiarygodności
 
 Ocena mówi o dwóch rzeczach:
 
@@ -82,7 +100,7 @@ Każde sprawdzenie ma wagę, werdykt, wyjaśnienie i źródło (Menter, ANSYS, C
 
 Wtedy ocena porówna wynik z pomiarem i doda sprawdzenie balansu względem rozkładu masy.
 
-## 6. Na co uważać
+## 7. Na co uważać
 
 - **Porównywać można tylko symulacje liczone tak samo.** Inny model turbulencji albo inna ściana to inna metoda, a nie inny bolid. Program ostrzega o tym w porównaniu i w teście siatki.
 - **Niedokończone liczenie** to najczęstsze źródło złych wniosków. Raport pokazuje to na czerwono.
@@ -91,7 +109,7 @@ Wtedy ocena porówna wynik z pomiarem i doda sprawdzenie balansu względem rozk�
 - **Telemetria z toru** na razie nie jest wpięta w program. Obecne nagrania nie zawierają docisku aerodynamicznego ani skalibrowanej wysokości zawieszenia (szczegóły w README, sekcja 7).
 - Program nie ocenia zachowania w zakręcie, bo takich symulacji jeszcze nie ma.
 
-## 7. Co jest w którym folderze
+## 8. Co jest w którym folderze
 
 - `ingest/` czyta pliki i liczy (to jest właściwy program),
 - `src/` to aplikacja w przeglądarce,
@@ -99,6 +117,6 @@ Wtedy ocena porówna wynik z pomiarem i doda sprawdzenie balansu względem rozk�
 - `tests/` to testy automatyczne (sprawdzają, że to, co liczy program, zgadza się z wartościami o znanym wyniku),
 - `packs/` i `quant/` to wyniki (poza gitem).
 
-## 8. Co dalej
+## 9. Co dalej
 
 Zakręt, kąt znoszenia i różne prędkości, pełny bolid zamiast połowy, telemetria z toru jako punkt odniesienia dla CFD. Szczegóły w `README.md`, sekcja 7.

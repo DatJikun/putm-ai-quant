@@ -11,6 +11,7 @@ from ingest.diff_pack import write_diff
 from ingest.fluent_dump import pick_cas_h5, run_fluent_dump, write_force_journal, find_fluent
 from ingest.inventory import write_inventory
 from ingest.mesh_study import write_study
+from ingest.metapack import export_meta, render_from_meta, verify_meta
 from ingest.pack import build_pack
 from ingest.compare import compare
 from ingest.conservation import write_conservation
@@ -75,6 +76,21 @@ def main() -> None:
     vw.add_argument("root", type=Path)
     vw.add_argument("--out", type=Path)
     vw.add_argument("--krok", type=float, default=0.02, help="Rozmiar kafelka siatki objętościowej w metrach")
+
+    mt = sub.add_parser(
+        "meta",
+        help="Metaplik: jeden folder z meta.json (wszystkie liczby i wnioski) i mapami w dwóch rozdzielczościach (1 cm i 3 mm) zamiast plików CFD-Post i zdjęć",
+    )
+    mt.add_argument("root", type=Path)
+    mt.add_argument("--out", type=Path)
+
+    mr = sub.add_parser("meta-render", help="Narysuj obrazki z samych map metapliku (dowód, że zdjęcia nie są potrzebne)")
+    mr.add_argument("meta_dir", type=Path)
+    mr.add_argument("--out", type=Path, required=True)
+    mr.add_argument("--powierzchnia", default="3mm", choices=["1cm", "3mm"])
+
+    mv = sub.add_parser("meta-verify", help="Sprawdź kompletność i sumy kontrolne folderu metapliku")
+    mv.add_argument("meta_dir", type=Path)
 
     cons = sub.add_parser("conservation", help="Residua i bilans masy z .dat.h5")
     cons.add_argument("root", type=Path)
@@ -224,6 +240,30 @@ def main() -> None:
             spacing=args.krok,
         )
         print(json.dumps({"pakiet": str(package)}, ensure_ascii=False, indent=2))
+    elif args.cmd == "meta":
+        pack_dir = Path("packs") / args.root.name
+        if not (pack_dir / "raport.json").exists():
+            build_report(args.root, pack_dir)
+        refs = json.loads((pack_dir / "aeropack.json").read_text(encoding="utf-8"))["kpis"]["references"]
+        index_file = pack_dir / "images" / "index.json"
+        result = export_meta(
+            args.root,
+            pack_dir,
+            args.out or pack_dir / "meta",
+            rho=refs["rho"]["value"],
+            mu=refs["mu"]["value"],
+            speed_ms=refs["speedMs"]["value"],
+            template=load_slices(),
+            images_index=json.loads(index_file.read_text(encoding="utf-8")) if index_file.exists() else None,
+            cache_dir=Path("quant") / args.root.name / ".cache",
+        )
+        mb = {k: round(v / 1e6, 2) for k, v in result["rozmiary_bajty"].items()}
+        print(json.dumps({"meta": result["meta"], "rozmiary_MB": mb, "razem_MB": round(result["razem_bajty"] / 1e6, 2), "oryginaly_GB": round(result["oryginaly_bajty"] / 1e9, 2)}, ensure_ascii=False, indent=2))
+    elif args.cmd == "meta-render":
+        print(json.dumps(render_from_meta(args.meta_dir, args.out, surface_label=args.powierzchnia), ensure_ascii=False, indent=2))
+    elif args.cmd == "meta-verify":
+        problems = verify_meta(args.meta_dir)
+        print(json.dumps({"ok": not problems, "problemy": problems}, ensure_ascii=False, indent=2))
     elif args.cmd == "conservation":
         out = args.out or Path("quant") / args.root.name / "zachowanie.json"
         cons_data = write_conservation(args.root, out)
